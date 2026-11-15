@@ -95,7 +95,7 @@ jobs:
           set -eo pipefail
           cd src/server
           npm install --ignore-scripts --no-audit --no-fund
-          node --test test/*.test.js | tee /tmp/backend-tests.txt
+          node --test --test-reporter=tap test/*.test.js | tee /tmp/backend-tests.txt
 
       - name: Restore signing keystore
         run: |
