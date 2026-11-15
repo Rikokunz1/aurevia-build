@@ -46,6 +46,15 @@ jobs:
           gh run download "$ARTIFACT_RUN" --name aurevia-apk --dir inputs/candidate
           gh release download "$FIXTURE_TAG" --pattern '*.apk' --dir inputs/baseline
           sha256sum inputs/*/*.apk | tee reports/input-sha256.txt
+      - name: Free ephemeral runner disk for emulator userdata
+        run: |
+          set -euo pipefail
+          # API33's system image still needs a ~7.4GB initial userdata image even
+          # with disk-size=2048M. Delete ONLY unused tools on this disposable CI VM.
+          df -h "$HOME"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          df -h "$HOME"
+          python3 -c 'import os, shutil; free=shutil.disk_usage(os.environ["HOME"]).free; print("CI emulator free disk: %.2f GiB" % (free/1024**3)); assert free >= 12*1024**3, "Insufficient CI disk; abort before boot/install, not an APK rejection"'
       - name: Enable KVM
         run: |
           test -e /dev/kvm
