@@ -13,6 +13,25 @@ adb shell getprop ro.product.cpu.abilist
 adb logcat -c
 FAILED=0
 
+check_firebase_client() {
+  local PHASE="$1"
+  local PID
+  PID=$(awk '{print $1}' "reports/${PHASE}-pid.txt" | head -1)
+  if ! [[ "$PID" =~ ^[0-9]+$ ]]; then FAILED=1; return; fi
+  if ! adb logcat -d -v threadtime --pid "$PID" > "reports/${PHASE}-app-logcat.txt"; then FAILED=1; return; fi
+  if grep -q 'Invalid component registrar' "reports/${PHASE}-app-logcat.txt"; then
+    echo "Firebase component discovery failed in $PHASE"
+    FAILED=1
+    return
+  fi
+  if ! grep -q 'AureviaPush.*Firebase Messaging client initialized' "reports/${PHASE}-app-logcat.txt"; then
+    echo "Firebase Messaging component readiness not observed in $PHASE"
+    FAILED=1
+    return
+  fi
+  printf '%s: FirebaseMessaging component ready; no invalid registrar\n' "$PHASE" >> reports/firebase-client-check.txt
+}
+
 printf '\n=== Candidate fresh install ===\n'
 timeout 120s adb install --no-streaming "$APK" 2>&1 | tee reports/fresh-install.txt
 FRESH_RESULT=${PIPESTATUS[0]}
@@ -21,6 +40,7 @@ if [ "$FRESH_RESULT" -eq 0 ]; then
   timeout 90s adb shell am start -W -n "$PKG/com.metrolist.music.MainActivity" 2>&1 | tee reports/fresh-launch.txt
   sleep 12
   adb shell pidof "$PKG" | tee reports/fresh-pid.txt || FAILED=1
+  check_firebase_client fresh
   adb shell dumpsys activity activities > reports/fresh-activities.txt
   adb exec-out screencap -p > reports/fresh-screen.png
 else
@@ -48,6 +68,7 @@ if [ "$BASE_RESULT" -eq 0 ]; then
     timeout 90s adb shell am start -W -n "$PKG/com.metrolist.music.MainActivity" 2>&1 | tee reports/upgrade-launch.txt
     sleep 10
     adb shell pidof "$PKG" | tee reports/upgrade-pid.txt || FAILED=1
+    check_firebase_client upgrade
     adb exec-out screencap -p > reports/upgrade-screen.png
   fi
 else
