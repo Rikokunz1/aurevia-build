@@ -139,7 +139,7 @@ jobs:
           VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
           BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
           echo "build-tools $BT | version $VN"
-          "$ANDROID_HOME/build-tools/$BT/zipalign" -f -p 4 "$RAW" /tmp/aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/zipalign" -f -P 16 4 "$RAW" /tmp/aligned.apk
           "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
             --ks "$GITHUB_WORKSPACE/aurevia-release.jks" \
             --ks-pass "pass:$STORE_PASSWORD" \
