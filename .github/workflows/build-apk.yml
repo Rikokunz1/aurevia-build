@@ -84,6 +84,13 @@ jobs:
           ls src | head
           test -f src/app/build.gradle.kts || { echo "source tree tidak valid"; exit 1; }
 
+      - name: Backend regression tests (isolated data, no live credentials)
+        run: |
+          set -eo pipefail
+          cd src/server
+          npm install --ignore-scripts --no-audit --no-fund
+          node --test test/*.test.js | tee /tmp/backend-tests.txt
+
       - name: Restore signing keystore
         run: |
           set -e
@@ -195,6 +202,7 @@ jobs:
             /tmp/Aurevia-Music-v*.apk
             /tmp/apk-sha.txt
             /tmp/video-geometry-tests.txt
+            /tmp/backend-tests.txt
             /tmp/apk-signature.txt
             /tmp/apk-badging.txt
           retention-days: 30
