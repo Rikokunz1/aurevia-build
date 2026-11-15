@@ -1,0 +1,149 @@
+name: Build Aurevia APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "versionName baru (kosong = pakai yang ada di build.gradle.kts)"
+        required: false
+        default: ""
+      version_code:
+        description: "versionCode baru (kosong = pakai yang ada)"
+        required: false
+        default: ""
+      source_url:
+        description: "URL source .tar.gz (kosong = ambil dari server OTA Aurevia)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Assemble signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Ambil source tree
+        run: |
+          set -e
+          mkdir -p src
+          URL="${{ inputs.source_url }}"
+          if [ -z "$URL" ]; then
+            URL="https://aurevia.rixxstore.my.id/v1/app/fork/source"
+          fi
+          echo "download source: $URL"
+          curl -L --fail --retry 3 --max-time 900 -A "okhttp/4.12.0" -o /tmp/src.tar.gz "$URL"
+          ls -l /tmp/src.tar.gz
+          tar -xzf /tmp/src.tar.gz -C src
+          ls src | head
+          test -f src/app/build.gradle.kts || { echo "source tree tidak valid"; exit 1; }
+
+      - name: Restore signing keystore
+        run: |
+          set -e
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > "$GITHUB_WORKSPACE/aurevia-release.jks"
+          ls -l aurevia-release.jks
+
+      - name: Bump versi (opsional)
+        run: |
+          set -e
+          VN="${{ inputs.version_name }}"
+          VC="${{ inputs.version_code }}"
+          if [ -n "$VN" ]; then
+            sed -i -E "s/versionName = \"[^\"]+\"/versionName = \"$VN\"/" src/app/build.gradle.kts
+          fi
+          if [ -n "$VC" ]; then
+            sed -i -E "s/versionCode = [0-9]+/versionCode = $VC/" src/app/build.gradle.kts
+          fi
+          grep -nE 'versionCode|versionName' src/app/build.gradle.kts | head -4
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            src/.gradle
+          key: gradle-${{ hashFiles('src/**/*.gradle.kts', 'src/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Build (2 phase) + zipalign + sign v1/v2/v3
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          METROLIST_APPLICATION_ID: app.aurevia.music
+          METROLIST_APP_NAME: Aurevia
+        run: |
+          set -eo pipefail
+          cd src
+          mkdir -p app/keystore
+          cp "$GITHUB_WORKSPACE/aurevia-release.jks" app/keystore/release.keystore
+          cat > gradle.properties <<'PROP'
+          org.gradle.jvmargs=-Xmx4g -XX:+UseSerialGC -Dfile.encoding=UTF-8
+          org.gradle.parallel=true
+          org.gradle.daemon=false
+          org.gradle.workers.max=4
+          org.gradle.caching=true
+          android.useAndroidX=true
+          android.enableJetifier=false
+          android.nonTransitiveRClass=false
+          PROP
+          sed -i 's/^          //' gradle.properties
+          chmod +x gradlew
+          echo "::group::PHASE 1 compileFossReleaseKotlin"
+          ./gradlew --console=plain --no-daemon --max-workers=4 \
+            -Dkotlin.compiler.execution.strategy=in-process \
+            :app:compileFossReleaseKotlin -x lint
+          echo "::endgroup::"
+          echo "::group::PHASE 2 assembleFossRelease"
+          ./gradlew --console=plain --no-daemon --max-workers=4 \
+            -Dkotlin.compiler.execution.strategy=in-process \
+            assembleFossRelease -x lint -x lintFossRelease
+          echo "::endgroup::"
+
+          RAW=$(find app/build/outputs/apk/foss/release -maxdepth 1 -name '*.apk' ! -name '*unsigned*' | head -1)
+          test -n "$RAW" || { echo "APK tidak ditemukan"; exit 1; }
+          VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          echo "build-tools $BT | version $VN"
+          "$ANDROID_HOME/build-tools/$BT/zipalign" -f -p 4 "$RAW" /tmp/aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
+            --ks "$GITHUB_WORKSPACE/aurevia-release.jks" \
+            --ks-pass "pass:$STORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --min-sdk-version 26 \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "/tmp/Aurevia-Music-v${VN}.apk" /tmp/aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --verbose --print-certs "/tmp/Aurevia-Music-v${VN}.apk"
+          sha256sum "/tmp/Aurevia-Music-v${VN}.apk" | tee /tmp/apk-sha.txt
+          ls -l "/tmp/Aurevia-Music-v${VN}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurevia-apk
+          path: |
+            /tmp/Aurevia-Music-v*.apk
+            /tmp/apk-sha.txt
+          retention-days: 30
+          if-no-files-found: error
