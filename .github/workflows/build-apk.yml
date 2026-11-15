@@ -38,8 +38,22 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Siapkan Android SDK
+        run: |
+          set -e
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "Android SDK tidak ditemukan"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDU="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDU" ] || SDU=$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1) || true
+          echo "sdkmanager: $SDU"
+          if [ -n "$SDU" ] && [ -x "$SDU" ]; then
+            yes | "$SDU" --licenses > /dev/null 2>&1 || true
+            "$SDU" "platform-tools" > /dev/null 2>&1 || true
+          fi
+          echo "--- build-tools ---"; ls "$SDK/build-tools" || true
+          echo "--- platforms ---";   ls "$SDK/platforms"   || true
 
       - name: Ambil source tree
         run: |
