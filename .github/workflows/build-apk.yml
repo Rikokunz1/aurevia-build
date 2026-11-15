@@ -159,8 +159,15 @@ jobs:
           set -x
           unzip -tq "$APK_OUT"
           "$ANDROID_HOME/build-tools/$BT/zipalign" -c -P 16 -v 4 "$APK_OUT" || { echo "zipalign check GAGAL"; exit 1; }
-          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$APK_OUT"
-          "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK_OUT" | head -5
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$APK_OUT" | tee /tmp/apk-signature.txt
+          EXPECTED_CERT_SHA256="44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7"
+          grep -Fx "Signer #1 certificate SHA-256 digest: $EXPECTED_CERT_SHA256" /tmp/apk-signature.txt > /dev/null || { echo "Sertifikat berubah; update APK diblokir"; exit 1; }
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK_OUT" > /tmp/apk-badging.txt
+          sed -n '1,8p' /tmp/apk-badging.txt
+          EXPECTED_VC=$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | sed -n '1p')
+          test -n "$EXPECTED_VC"
+          grep -F "package: name='app.aurevia.music' versionCode='$EXPECTED_VC' versionName='$VN'" /tmp/apk-badging.txt > /dev/null || { echo "Identitas paket atau versi tidak sesuai"; exit 1; }
+          grep -Fx "sdkVersion:'26'" /tmp/apk-badging.txt > /dev/null || { echo "minSdk berubah; perlu review kompatibilitas"; exit 1; }
           set +x
           echo "::endgroup::"
           sha256sum "$APK_OUT" | tee /tmp/apk-sha.txt
