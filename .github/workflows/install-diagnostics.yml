@@ -1,0 +1,69 @@
+name: APK install diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: Build run containing the APK to test
+        required: true
+        default: '43737456491'
+      fixture_tag:
+        description: Private release containing the baseline APK
+        required: true
+        default: install-fixtures
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  install-test:
+    name: Install + upgrade API ${{ matrix.api }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 33, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Download APKs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_RUN: ${{ inputs.artifact_run }}
+          FIXTURE_TAG: ${{ inputs.fixture_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/candidate inputs/baseline reports
+          gh run download "$ARTIFACT_RUN" --name aurevia-apk --dir inputs/candidate
+          gh release download "$FIXTURE_TAG" --pattern '*.apk' --dir inputs/baseline
+          sha256sum inputs/*/*.apk | tee reports/input-sha256.txt
+      - name: Enable KVM
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          ls -l /dev/kvm
+      - name: Real install and upgrade tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/install-diagnostics.sh
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-report-api-${{ matrix.api }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
