@@ -37,6 +37,8 @@ output.mkdir(exist_ok=True)
 files = [
     source / 'app/src/main/kotlin/com/metrolist/music/aurevia/YtVideoTransform.kt',
     source / 'app/src/test/kotlin/com/metrolist/music/aurevia/YtVideoTransformTest.kt',
+    source / 'app/src/main/kotlin/com/metrolist/music/playback/AureviaPlaybackPolicy.kt',
+    source / 'app/src/test/kotlin/com/metrolist/music/playback/AureviaPlaybackPolicyTest.kt',
 ]
 assert all(path.is_file() for path in files)
 subprocess.run([
@@ -47,6 +49,7 @@ subprocess.run([
 result = subprocess.run([
     'java', '-cp', str(output) + ':' + classpath, 'org.junit.runner.JUnitCore',
     'com.metrolist.music.aurevia.YtVideoTransformTest',
+    'com.metrolist.music.playback.AureviaPlaybackPolicyTest',
 ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 print(result.stdout, flush=True)
 Path('/tmp/video-geometry-tests.txt').write_text(result.stdout)
