@@ -161,7 +161,8 @@ jobs:
           "$ANDROID_HOME/build-tools/$BT/zipalign" -c -P 16 -v 4 "$APK_OUT" || { echo "zipalign check GAGAL"; exit 1; }
           "$ANDROID_HOME/build-tools/$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$APK_OUT" | tee /tmp/apk-signature.txt
           EXPECTED_CERT_SHA256="44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7"
-          grep -Fx "Signer #1 certificate SHA-256 digest: $EXPECTED_CERT_SHA256" /tmp/apk-signature.txt > /dev/null || { echo "Sertifikat berubah; update APK diblokir"; exit 1; }
+          ACTUAL_CERT_SHA256=$(sed -nE 's/^.*certificate SHA-256 digest: ([[:xdigit:]]+)[[:space:]]*$/\1/p' /tmp/apk-signature.txt | tr '[:upper:]' '[:lower:]' | sort -u)
+          test "$ACTUAL_CERT_SHA256" = "$EXPECTED_CERT_SHA256" || { echo "Sertifikat berubah atau tidak terbaca; update APK diblokir"; exit 1; }
           "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK_OUT" > /tmp/apk-badging.txt
           sed -n '1,8p' /tmp/apk-badging.txt
           EXPECTED_VC=$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | sed -n '1p')
