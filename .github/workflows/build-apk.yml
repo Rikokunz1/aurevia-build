@@ -80,9 +80,15 @@ jobs:
             TARBALL=/tmp/srcpkg/src.tar.gz
           fi
           echo "tarball: $TARBALL ($(stat -c%s "$TARBALL") byte)"
+          sha256sum "$TARBALL" | tee /tmp/source-sha.txt
           tar -xzf "$TARBALL" -C src
           ls src | head
           test -f src/app/build.gradle.kts || { echo "source tree tidak valid"; exit 1; }
+
+      - name: Validate packaged Firebase public config (no private server credential)
+        run: |
+          set -eo pipefail
+          python3 src/scripts/configure-firebase.py --check | tee /tmp/firebase-config-check.txt
 
       - name: Backend regression tests (isolated data, no live credentials)
         run: |
@@ -189,6 +195,14 @@ jobs:
           grep -F "package: name='app.aurevia.music' versionCode='$EXPECTED_VC' versionName='$VN'" /tmp/apk-badging.txt > /dev/null || { echo "Identitas paket atau versi tidak sesuai"; exit 1; }
           grep -Fx "sdkVersion:'26'" /tmp/apk-badging.txt > /dev/null || { echo "minSdk berubah; perlu review kompatibilitas"; exit 1; }
           set +x
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump resources "$APK_OUT" > /tmp/apk-resources-private-check.txt
+          for NAME in google_app_id gcm_defaultSenderId google_api_key project_id; do
+            grep -q "string/$NAME" /tmp/apk-resources-private-check.txt || { echo "Firebase init resource missing: $NAME"; exit 1; }
+          done
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump xmltree "$APK_OUT" AndroidManifest.xml > /tmp/apk-manifest-private-check.txt
+          grep -q 'com.google.firebase.provider.FirebaseInitProvider' /tmp/apk-manifest-private-check.txt
+          grep -q 'AureviaMessagingService' /tmp/apk-manifest-private-check.txt
+          echo 'PACKAGED_FIREBASE_INIT_OK' | tee -a /tmp/firebase-config-check.txt
           echo "::endgroup::"
           sha256sum "$APK_OUT" | tee /tmp/apk-sha.txt
           stat -c '%s byte' "$APK_OUT"
@@ -205,6 +219,8 @@ jobs:
             /tmp/backend-tests.txt
             /tmp/apk-signature.txt
             /tmp/apk-badging.txt
+            /tmp/source-sha.txt
+            /tmp/firebase-config-check.txt
           retention-days: 30
           if-no-files-found: error
 
