@@ -12,7 +12,7 @@ on:
         required: false
         default: ""
       source_url:
-        description: "URL source .tar.gz (kosong = ambil dari server OTA Aurevia)"
+        description: "URL source .tar.gz (kosong = pakai release src-latest)"
         required: false
         default: ""
 
@@ -56,17 +56,23 @@ jobs:
           echo "--- platforms ---";   ls "$SDK/platforms"   || true
 
       - name: Ambil source tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          mkdir -p src
+          mkdir -p src /tmp/srcpkg
           URL="${{ inputs.source_url }}"
           if [ -z "$URL" ]; then
-            URL="https://aurevia.rixxstore.my.id/v1/app/fork/source"
+            echo "ambil dari release src-latest"
+            gh release download src-latest --pattern '*.tar.gz' --dir /tmp/srcpkg --clobber
+            TARBALL=$(ls /tmp/srcpkg/*.tar.gz | tail -1)
+          else
+            echo "ambil dari URL: $URL"
+            curl -L --fail --retry 3 --max-time 900 -A "okhttp/4.12.0" -o /tmp/srcpkg/src.tar.gz "$URL"
+            TARBALL=/tmp/srcpkg/src.tar.gz
           fi
-          echo "download source: $URL"
-          curl -L --fail --retry 3 --max-time 900 -A "okhttp/4.12.0" -o /tmp/src.tar.gz "$URL"
-          ls -l /tmp/src.tar.gz
-          tar -xzf /tmp/src.tar.gz -C src
+          echo "tarball: $TARBALL ($(stat -c%s "$TARBALL") byte)"
+          tar -xzf "$TARBALL" -C src
           ls src | head
           test -f src/app/build.gradle.kts || { echo "source tree tidak valid"; exit 1; }
 
