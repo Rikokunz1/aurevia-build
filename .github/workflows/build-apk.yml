@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: apk-build
@@ -52,6 +53,13 @@ jobs:
             yes | "$SDU" --licenses > /dev/null 2>&1 || true
             "$SDU" "platform-tools" > /dev/null 2>&1 || true
           fi
+          # Pin the signer/aligner; never pick an arbitrary newest/preview tool.
+          SIGNING_BT=35.0.0
+          if [ ! -x "$SDK/build-tools/$SIGNING_BT/apksigner" ]; then
+            test -n "$SDU" && test -x "$SDU"
+            "$SDU" "build-tools;$SIGNING_BT"
+          fi
+          echo "SIGNING_BT=$SIGNING_BT" >> "$GITHUB_ENV"
           echo "--- build-tools ---"; ls "$SDK/build-tools" || true
           echo "--- platforms ---";   ls "$SDK/platforms"   || true
 
@@ -134,6 +142,11 @@ jobs:
             -Dkotlin.compiler.execution.strategy=in-process \
             :app:compileFossReleaseKotlin -x lint
           echo "::endgroup::"
+          echo "::group::VIDEO GEOMETRY REGRESSION TESTS"
+          ./gradlew --console=plain --no-daemon --max-workers=4 \
+            -Dkotlin.compiler.execution.strategy=in-process \
+            :app:testFossReleaseUnitTest --tests 'com.metrolist.music.aurevia.YtVideoTransformTest' -x lint
+          echo "::endgroup::"
           echo "::group::PHASE 2 assembleFossRelease"
           ./gradlew --console=plain --no-daemon --max-workers=4 \
             -Dkotlin.compiler.execution.strategy=in-process \
@@ -143,7 +156,8 @@ jobs:
           RAW=$(find app/build/outputs/apk/foss/release -maxdepth 1 -name '*.apk' ! -name '*unsigned*' | head -1)
           test -n "$RAW" || { echo "APK tidak ditemukan"; exit 1; }
           VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
-          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          BT="$SIGNING_BT"
+          test -x "$ANDROID_HOME/build-tools/$BT/apksigner"
           echo "build-tools $BT | version $VN"
           "$ANDROID_HOME/build-tools/$BT/zipalign" -f -P 16 4 "$RAW" /tmp/aligned.apk
           "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
@@ -184,3 +198,56 @@ jobs:
             /tmp/apk-sha.txt
           retention-days: 30
           if-no-files-found: error
+
+  install-test:
+    name: Real install + upgrade API ${{ matrix.api }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Download release candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: aurevia-apk
+          path: inputs/candidate
+      - name: Download upgrade baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/baseline reports
+          gh release download install-fixtures --pattern '*.apk' --dir inputs/baseline
+          sha256sum inputs/*/*.apk | tee reports/input-sha256.txt
+      - name: Enable KVM
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Android package-manager install, upgrade, launch
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/install-diagnostics.sh
+      - name: Save install evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-report-api-${{ matrix.api }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
