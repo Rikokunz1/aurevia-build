@@ -154,9 +154,18 @@ jobs:
             --min-sdk-version 26 \
             --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
             --out "/tmp/Aurevia-Music-v${VN}.apk" /tmp/aligned.apk
-          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --verbose --print-certs "/tmp/Aurevia-Music-v${VN}.apk"
-          sha256sum "/tmp/Aurevia-Music-v${VN}.apk" | tee /tmp/apk-sha.txt
-          ls -l "/tmp/Aurevia-Music-v${VN}.apk"
+          APK_OUT="/tmp/Aurevia-Music-v${VN}.apk"
+          echo "::group::GATE: verifikasi paket (biar tidak 'paket tidak valid')"
+          set -x
+          unzip -tq "$APK_OUT"
+          "$ANDROID_HOME/build-tools/$BT/zipalign" -c -P 16 -v 4 "$APK_OUT" || { echo "zipalign check GAGAL"; exit 1; }
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$APK_OUT"
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK_OUT" | head -5
+          set +x
+          echo "::endgroup::"
+          sha256sum "$APK_OUT" | tee /tmp/apk-sha.txt
+          stat -c '%s byte' "$APK_OUT"
+          ls -l "$APK_OUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
