@@ -15,6 +15,14 @@ on:
         description: "URL source .tar.gz (kosong = pakai release src-latest)"
         required: false
         default: ""
+      source_asset:
+        description: "Exact private src-latest source asset (never select by lexical order)"
+        required: false
+        default: "aurevia-source-14.0.0-r7.tar.gz"
+      installed_baseline_run:
+        description: "Actions run of the candidate already installed on the owner phone"
+        required: false
+        default: "43760301816"
 
 permissions:
   contents: read
@@ -72,8 +80,11 @@ jobs:
           URL="${{ inputs.source_url }}"
           if [ -z "$URL" ]; then
             echo "ambil dari release src-latest"
-            gh release download src-latest --pattern '*.tar.gz' --dir /tmp/srcpkg --clobber
-            TARBALL=$(ls /tmp/srcpkg/*.tar.gz | tail -1)
+            ASSET="${{ inputs.source_asset }}"
+            test -n "$ASSET"
+            gh release download src-latest --pattern "$ASSET" --dir /tmp/srcpkg --clobber
+            test "$(find /tmp/srcpkg -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
+            TARBALL=$(find /tmp/srcpkg -maxdepth 1 -name '*.tar.gz')
           else
             echo "ambil dari URL: $URL"
             curl -L --fail --retry 3 --max-time 900 -A "okhttp/4.12.0" -o /tmp/srcpkg/src.tar.gz "$URL"
@@ -232,7 +243,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [30, 35]
+        api: [30, 33, 35]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -252,6 +263,22 @@ jobs:
           mkdir -p inputs/baseline reports
           gh release download install-fixtures --pattern '*.apk' --dir inputs/baseline
           sha256sum inputs/*/*.apk | tee reports/input-sha256.txt
+      - name: Download already-installed private baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/installed-baseline inputs/installed-baseline
+          gh run download "${{ inputs.installed_baseline_run }}" --name aurevia-apk --dir /tmp/installed-baseline
+          find /tmp/installed-baseline -name '*.apk' -exec cp {} inputs/installed-baseline/ \;
+          test "$(find inputs/installed-baseline -name '*.apk' | wc -l)" -eq 1
+          sha256sum inputs/installed-baseline/*.apk | tee reports/installed-baseline-sha256.txt
+      - name: Free ephemeral runner disk before emulator boot
+        run: |
+          set -euo pipefail
+          df -h "$HOME"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          python3 -c 'import os, shutil; f=shutil.disk_usage(os.environ["HOME"]).free; print("Emulator free GiB",f/1024**3); assert f>=12*1024**3, "CI disk shortage before install, not an APK rejection"'
       - name: Enable KVM
         run: |
           test -e /dev/kvm

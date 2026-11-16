@@ -77,4 +77,49 @@ else
 fi
 adb logcat -d -v threadtime > reports/upgrade-logcat.txt
 printf '\nRESULT fresh=%s baseline=%s upgrade=%s\n' "$FRESH_RESULT" "$BASE_RESULT" "$UPGRADE_RESULT" | tee reports/result.txt
+
+# Separate, disposable emulator scenario: update the SAME private197 installed by
+# the owner to the corrected198. Uninstall is ONLY fixture setup on this CI VM;
+# the actual baseline->candidate update below never uninstalls or clears data.
+if [ -d inputs/installed-baseline ]; then
+  INSTALLED=$(find inputs/installed-baseline -name '*.apk' | head -1)
+  adb uninstall "$PKG" || true
+  adb logcat -c
+  timeout 120s adb install --no-streaming "$INSTALLED" 2>&1 | tee reports/installed-baseline-install.txt
+  INSTALLED_BASE_RESULT=${PIPESTATUS[0]}
+  INSTALLED_UPGRADE_RESULT=99
+  if [ "$INSTALLED_BASE_RESULT" -eq 0 ]; then
+    adb shell am start -W -n "$PKG/com.metrolist.music.MainActivity" > reports/installed-baseline-launch.txt 2>&1
+    sleep 5
+    adb shell dumpsys package "$PKG" > reports/installed-baseline-package.txt
+    adb shell am force-stop "$PKG"
+    timeout 120s adb install --no-streaming -r "$APK" 2>&1 | tee reports/installed-upgrade-install.txt
+    INSTALLED_UPGRADE_RESULT=${PIPESTATUS[0]}
+    if [ "$INSTALLED_UPGRADE_RESULT" -eq 0 ]; then
+      adb shell dumpsys package "$PKG" > reports/installed-upgrade-package.txt
+      adb shell am start -W -n "$PKG/com.metrolist.music.MainActivity" > reports/installed-upgrade-launch.txt 2>&1
+      sleep 10
+      adb shell pidof "$PKG" | tee reports/installed-upgrade-pid.txt || FAILED=1
+      check_firebase_client installed-upgrade
+      adb exec-out screencap -p > reports/installed-upgrade-screen.png
+      python3 - <<'CHECK'
+from pathlib import Path
+import re
+before=Path('reports/installed-baseline-package.txt').read_text()
+after=Path('reports/installed-upgrade-package.txt').read_text()
+assert re.search(r'versionCode=197\b',before), 'Unexpected phone baseline'
+assert re.search(r'versionCode=198\b',after), 'Candidate version must increment for update-in-place'
+def stamp(text):
+    rows=re.findall(r'firstInstallTime=([^\r\n]+)',text)
+    assert rows
+    return rows
+assert stamp(before)==stamp(after), 'Update changed the package first-install time'
+Path('reports/installed-upgrade-data-preservation.txt').write_text('197->198 update-in-place: firstInstallTime unchanged; package retained; no uninstall/clear between baseline and candidate.\n')
+CHECK
+      [ "$?" -eq 0 ] || FAILED=1
+    else FAILED=1; fi
+  else FAILED=1; fi
+  adb logcat -d -v threadtime > reports/installed-upgrade-logcat.txt
+  printf 'INSTALLED_RESULT baseline=%s upgrade=%s\n' "$INSTALLED_BASE_RESULT" "$INSTALLED_UPGRADE_RESULT" | tee -a reports/result.txt
+fi
 exit "$FAILED"
