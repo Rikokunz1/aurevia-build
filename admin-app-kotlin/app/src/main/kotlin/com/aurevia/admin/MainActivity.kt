@@ -512,6 +512,11 @@ private fun UserDialog(
     // Changing your own role from the panel is exactly how a developer locked themselves out;
     // the server refuses it now, and the UI must not even offer the option.
     val isSelf = user.s("username").equals(AdminSession.username, ignoreCase = true)
+    // Developer is the highest role: an owner may not touch a developer account, and only a
+    // developer may hand out the developer role. Mirrors the server policy exactly.
+    val iAmDeveloper = AdminSession.role == "developer"
+    val targetIsDeveloper = user.s("role") == "developer"
+    val roleEditable = AdminSession.isOwnerLevel && !isSelf && (iAmDeveloper || !targetIsDeveloper)
 
     fun save() {
         if (busy) return
@@ -580,7 +585,7 @@ private fun UserDialog(
                     listOf("user", "owner", "developer").forEach { option ->
                         FilterChip(
                             selected = role == option,
-                            enabled = AdminSession.isOwnerLevel && !busy && !isSelf,
+                            enabled = roleEditable && !busy && (option != "developer" || iAmDeveloper),
                             onClick = { if (option != role) { role = option; confirmRole = true } },
                             label = { Text(option, fontSize = 11.sp) },
                             colors = FilterChipDefaults.filterChipColors(
@@ -593,6 +598,14 @@ private fun UserDialog(
                 }
                 if (isSelf) Text(
                     "Ini akun kamu sendiri — role tidak bisa diubah dari panel supaya tidak terkunci lagi.",
+                    color = AdminMuted, fontSize = 11.sp,
+                )
+                if (!isSelf && targetIsDeveloper && !iAmDeveloper) Text(
+                    "Akun developer dilindungi: hanya developer lain yang bisa mengubah rolenya.",
+                    color = AdminMuted, fontSize = 11.sp,
+                )
+                if (!isSelf && AdminSession.isOwnerLevel && !iAmDeveloper) Text(
+                    "Hanya developer yang bisa mengangkat akun menjadi developer.",
                     color = AdminMuted, fontSize = 11.sp,
                 )
                 if (localError.isNotBlank()) Text(localError, color = AdminRed, fontSize = 12.sp)
@@ -760,7 +773,7 @@ private fun InfoScreen(onLogout: () -> Unit) {
             InfoCard("Room Live", rooms.toString())
             InfoCard(
                 "Aplikasi",
-                "Aurevia Admin 2.0.1 (Kotlin/Compose)\nPanel ini terpisah dari aplikasi musik.",
+                "Aurevia Admin 2.0.2 (Kotlin/Compose)\nPanel ini terpisah dari aplikasi musik.",
             )
             if (error.isNotBlank()) Text(error, color = AdminMuted, fontSize = 11.sp)
             Button(
