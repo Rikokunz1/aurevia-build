@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setUserAgentString(s.getUserAgentString() + " AureviaAdmin/1.1");
+        s.setUserAgentString(s.getUserAgentString() + " AureviaAdmin/1.2");
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -77,13 +77,6 @@ public class MainActivity extends Activity {
             @SuppressWarnings("deprecation")
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return route(Uri.parse(url));
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                // A blank/aborted first paint is the second most common "cannot open" symptom.
-                if (view.getContentHeight() == 0) showProblem("Panel kosong setelah dimuat. Tutup lalu buka lagi.");
             }
 
             @Override
