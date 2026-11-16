@@ -421,6 +421,10 @@
   } else {
     signedIn();
   }
+  // End-to-end readiness signal: reaches logcat via WebChromeClient, so a blank shell
+  // cannot masquerade as a working panel during automated launch tests.
+  console.log('PANEL_READY 1.2.0 nav=' + document.querySelectorAll('nav button').length +
+    ' browsers=' + (document.getElementById('loginView') ? 'login' : 'missing'));
 })();
 </script>
 </body>
