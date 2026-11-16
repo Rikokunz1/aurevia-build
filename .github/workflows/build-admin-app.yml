@@ -230,7 +230,8 @@ jobs:
           emulator-boot-timeout: 900
           script: |
             set -euxo pipefail
-            APK=$(ls artifacts/Aurevia-Admin-v*.apk | head -1)
+            APK=$(find artifacts -name "Aurevia-Admin-v*.apk" | head -1)
+            test -n "$APK"
             mkdir -p reports
             adb install --no-streaming "$APK" 2>&1 | tee reports/install.txt
             adb shell pm list packages | grep -F app.aurevia.admin
