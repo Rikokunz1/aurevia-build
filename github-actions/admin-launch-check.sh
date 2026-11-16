@@ -20,9 +20,14 @@ sleep 15
 adb shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | tee reports/focus.txt
 grep -F 'app.aurevia.admin' reports/focus.txt
 
-# Recording the actual pixels is the only proof a WebView shell painted something.
+# Recording the actual pixels is proof the shell painted something.
 adb exec-out screencap -p > reports/screen.png
 test -s reports/screen.png
+
+# Stronger proof: the bundled HTML executed. The panel logs PANEL_READY once its
+# script has actually run, and WebChromeClient forwards console output to logcat.
+adb logcat -d | grep -F 'PANEL_READY' | tail -5 | tee reports/panel-ready.txt
+grep -Eq 'PANEL_READY [0-9]+\.[0-9]+\.[0-9]+ nav=[1-9]' reports/panel-ready.txt
 
 adb shell pidof app.aurevia.admin | tee reports/pid.txt
 test -s reports/pid.txt
