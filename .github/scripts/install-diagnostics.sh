@@ -5,6 +5,11 @@ mkdir -p reports
 APK=$(find inputs/candidate -name '*.apk' | sort | head -1)
 BASELINE=$(find inputs/baseline -name '*.apk' | sort | head -1)
 PKG=app.aurevia.music
+# Expected version codes for the in-place update gate. Bump these per release
+# instead of hardcoding them in the assertion below.
+EXPECTED_BASELINE_VC="${EXPECTED_BASELINE_VC:-201}"
+EXPECTED_CANDIDATE_VC="${EXPECTED_CANDIDATE_VC:-202}"
+export EXPECTED_BASELINE_VC EXPECTED_CANDIDATE_VC
 exec > >(tee reports/console.txt) 2>&1
 printf 'Candidate: %s\nBaseline: %s\n' "$APK" "$BASELINE"
 adb shell getprop ro.build.version.sdk
@@ -104,17 +109,22 @@ if [ -d inputs/installed-baseline ]; then
       adb exec-out screencap -p > reports/installed-upgrade-screen.png
       python3 - <<'CHECK'
 from pathlib import Path
-import re
+import os, re
+base_vc=os.environ['EXPECTED_BASELINE_VC'].strip()
+cand_vc=os.environ['EXPECTED_CANDIDATE_VC'].strip()
+assert base_vc.isdigit() and cand_vc.isdigit(), 'Expected version codes must be numeric'
+assert int(cand_vc) > int(base_vc), 'Candidate version must increment for update-in-place'
 before=Path('reports/installed-baseline-package.txt').read_text()
 after=Path('reports/installed-upgrade-package.txt').read_text()
-assert re.search(r'versionCode=200\b',before), 'Unexpected phone baseline'
-assert re.search(r'versionCode=201\b',after), 'Candidate version must increment for update-in-place'
+assert re.search(r'versionCode=%s\b' % base_vc, before), 'Unexpected phone baseline (wanted %s)' % base_vc
+assert re.search(r'versionCode=%s\b' % cand_vc, after), 'Candidate did not install as %s' % cand_vc
 def stamp(text):
     rows=re.findall(r'firstInstallTime=([^\r\n]+)',text)
     assert rows
     return rows
 assert stamp(before)==stamp(after), 'Update changed the package first-install time'
-Path('reports/installed-upgrade-data-preservation.txt').write_text('200->201 update-in-place: firstInstallTime unchanged; package retained; no uninstall/clear between baseline and candidate.\n')
+Path('reports/installed-upgrade-data-preservation.txt').write_text(
+    '%s->%s update-in-place: firstInstallTime unchanged; package retained; no uninstall/clear between baseline and candidate.\n' % (base_vc, cand_vc))
 CHECK
       [ "$?" -eq 0 ] || FAILED=1
     else FAILED=1; fi
