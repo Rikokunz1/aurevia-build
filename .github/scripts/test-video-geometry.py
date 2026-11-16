@@ -46,6 +46,8 @@ files = [
     source / 'app/src/test/kotlin/com/metrolist/music/aurevia/VideoHttpTransportTest.kt',
     source / 'app/src/main/kotlin/com/metrolist/music/aurevia/IosScrollPhysics.kt',
     source / 'app/src/test/kotlin/com/metrolist/music/aurevia/IosScrollPhysicsTest.kt',
+    source / 'app/src/main/kotlin/com/metrolist/music/aurevia/VyoraLayoutPolicy.kt',
+    source / 'app/src/test/kotlin/com/metrolist/music/aurevia/VyoraLayoutPolicyTest.kt',
 ]
 assert all(path.is_file() for path in files)
 subprocess.run([
@@ -61,6 +63,7 @@ result = subprocess.run([
     'com.metrolist.music.aurevia.VideoStreamPolicyTest',
     'com.metrolist.music.aurevia.VideoHttpTransportTest',
     'com.metrolist.music.aurevia.IosScrollPhysicsTest',
+    'com.metrolist.music.aurevia.VyoraLayoutPolicyTest',
 ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 print(result.stdout, flush=True)
 Path('/tmp/video-geometry-tests.txt').write_text(result.stdout)

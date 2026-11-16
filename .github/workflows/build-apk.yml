@@ -18,11 +18,11 @@ on:
       source_asset:
         description: "Exact private src-latest source asset (never select by lexical order)"
         required: false
-        default: "aurevia-source-14.0.0-r7.tar.gz"
+        default: "aurevia-source-14.0.0-vyora-ui-r1.tar.gz"
       installed_baseline_run:
         description: "Actions run of the candidate already installed on the owner phone"
         required: false
-        default: "43760301816"
+        default: "43816115113"
 
 permissions:
   contents: read
