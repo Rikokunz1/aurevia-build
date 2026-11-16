@@ -48,6 +48,10 @@ files = [
     source / 'app/src/test/kotlin/com/metrolist/music/aurevia/IosScrollPhysicsTest.kt',
     source / 'app/src/main/kotlin/com/metrolist/music/aurevia/VyoraLayoutPolicy.kt',
     source / 'app/src/test/kotlin/com/metrolist/music/aurevia/VyoraLayoutPolicyTest.kt',
+    source / 'app/src/main/kotlin/com/metrolist/music/aurevia/AureviaInterfacePolicy.kt',
+    source / 'app/src/test/kotlin/com/metrolist/music/aurevia/AureviaInterfacePolicyTest.kt',
+    source / 'app/src/main/kotlin/com/metrolist/music/vyora/glass/floatingtabbar/FoldGeometry.kt',
+    source / 'app/src/test/kotlin/com/metrolist/music/aurevia/AureviaFoldGeometryTest.kt',
 ]
 assert all(path.is_file() for path in files)
 subprocess.run([
@@ -64,6 +68,8 @@ result = subprocess.run([
     'com.metrolist.music.aurevia.VideoHttpTransportTest',
     'com.metrolist.music.aurevia.IosScrollPhysicsTest',
     'com.metrolist.music.aurevia.VyoraLayoutPolicyTest',
+    'com.metrolist.music.aurevia.AureviaInterfacePolicyTest',
+    'com.metrolist.music.aurevia.AureviaFoldGeometryTest',
 ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 print(result.stdout, flush=True)
 Path('/tmp/video-geometry-tests.txt').write_text(result.stdout)
