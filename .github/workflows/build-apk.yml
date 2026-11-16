@@ -18,11 +18,11 @@ on:
       source_asset:
         description: "Exact private src-latest source asset (never select by lexical order)"
         required: false
-        default: "aurevia-source-14.0.0-motion200-r1.tar.gz"
+        default: "aurevia-source-14.0.0-live201-r1.tar.gz"
       installed_baseline_run:
         description: "Actions run of the candidate already installed on the owner phone"
         required: false
-        default: "43828451594"
+        default: "43838850909"
 
 permissions:
   contents: read

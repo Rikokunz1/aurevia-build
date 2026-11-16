@@ -78,8 +78,8 @@ fi
 adb logcat -d -v threadtime > reports/upgrade-logcat.txt
 printf '\nRESULT fresh=%s baseline=%s upgrade=%s\n' "$FRESH_RESULT" "$BASE_RESULT" "$UPGRADE_RESULT" | tee reports/result.txt
 
-# Separate, disposable emulator scenario: update the SAME private199 installed by
-# the owner to the corrected200. Uninstall is ONLY fixture setup on this CI VM;
+# Separate, disposable emulator scenario: update the SAME private200 installed by
+# the owner to the corrected201. Uninstall is ONLY fixture setup on this CI VM;
 # the actual baseline->candidate update below never uninstalls or clears data.
 if [ -d inputs/installed-baseline ]; then
   INSTALLED=$(find inputs/installed-baseline -name '*.apk' | head -1)
@@ -107,14 +107,14 @@ from pathlib import Path
 import re
 before=Path('reports/installed-baseline-package.txt').read_text()
 after=Path('reports/installed-upgrade-package.txt').read_text()
-assert re.search(r'versionCode=199\b',before), 'Unexpected phone baseline'
-assert re.search(r'versionCode=200\b',after), 'Candidate version must increment for update-in-place'
+assert re.search(r'versionCode=200\b',before), 'Unexpected phone baseline'
+assert re.search(r'versionCode=201\b',after), 'Candidate version must increment for update-in-place'
 def stamp(text):
     rows=re.findall(r'firstInstallTime=([^\r\n]+)',text)
     assert rows
     return rows
 assert stamp(before)==stamp(after), 'Update changed the package first-install time'
-Path('reports/installed-upgrade-data-preservation.txt').write_text('199->200 update-in-place: firstInstallTime unchanged; package retained; no uninstall/clear between baseline and candidate.\n')
+Path('reports/installed-upgrade-data-preservation.txt').write_text('200->201 update-in-place: firstInstallTime unchanged; package retained; no uninstall/clear between baseline and candidate.\n')
 CHECK
       [ "$?" -eq 0 ] || FAILED=1
     else FAILED=1; fi
