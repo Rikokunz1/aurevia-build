@@ -508,6 +508,10 @@ private fun UserDialog(
     var badge by remember { mutableStateOf(user.s("badge")) }
     var busy by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf("") }
+    var confirmRole by remember { mutableStateOf(false) }
+    // Changing your own role from the panel is exactly how a developer locked themselves out;
+    // the server refuses it now, and the UI must not even offer the option.
+    val isSelf = user.s("username").equals(AdminSession.username, ignoreCase = true)
 
     fun save() {
         if (busy) return
@@ -576,8 +580,8 @@ private fun UserDialog(
                     listOf("user", "owner", "developer").forEach { option ->
                         FilterChip(
                             selected = role == option,
-                            enabled = AdminSession.isOwnerLevel && !busy,
-                            onClick = { role = option },
+                            enabled = AdminSession.isOwnerLevel && !busy && !isSelf,
+                            onClick = { if (option != role) { role = option; confirmRole = true } },
                             label = { Text(option, fontSize = 11.sp) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = AdminRed.copy(alpha = 0.18f),
@@ -587,6 +591,10 @@ private fun UserDialog(
                         )
                     }
                 }
+                if (isSelf) Text(
+                    "Ini akun kamu sendiri — role tidak bisa diubah dari panel supaya tidak terkunci lagi.",
+                    color = AdminMuted, fontSize = 11.sp,
+                )
                 if (localError.isNotBlank()) Text(localError, color = AdminRed, fontSize = 12.sp)
             }
         },
@@ -598,6 +606,32 @@ private fun UserDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Tutup", color = AdminMuted) } },
     )
+
+    if (confirmRole) {
+        val current = user.s("role").ifBlank { "user" }
+        AlertDialog(
+            onDismissRequest = { confirmRole = false; role = current },
+            containerColor = AdminCardBg,
+            titleContentColor = AdminInk,
+            textContentColor = AdminMuted,
+            title = { Text("Ubah role akun?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "@${user.s("username")} akan menjadi \"$role\" (sekarang \"$current\"). " +
+                        "Akun dengan role \"user\" tidak bisa membuka panel ini.",
+                    fontSize = 13.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmRole = false; save() }) {
+                    Text("Ya, ubah", color = AdminRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRole = false; role = current }) { Text("Batal", color = AdminMuted) }
+            },
+        )
+    }
 }
 
 /* ------------------------------------------------------------------ broadcast */
@@ -726,7 +760,7 @@ private fun InfoScreen(onLogout: () -> Unit) {
             InfoCard("Room Live", rooms.toString())
             InfoCard(
                 "Aplikasi",
-                "Aurevia Admin 2.0.0 (Kotlin/Compose)\nPanel ini terpisah dari aplikasi musik.",
+                "Aurevia Admin 2.0.1 (Kotlin/Compose)\nPanel ini terpisah dari aplikasi musik.",
             )
             if (error.isNotBlank()) Text(error, color = AdminMuted, fontSize = 11.sp)
             Button(
