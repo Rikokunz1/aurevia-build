@@ -5,11 +5,11 @@ mkdir -p reports
 APK=$(find inputs/candidate -name '*.apk' | sort | head -1)
 BASELINE=$(find inputs/baseline -name '*.apk' | sort | head -1)
 PKG=app.aurevia.music
-# Expected version codes for the in-place update gate. Bump these per release
-# instead of hardcoding them in the assertion below.
-EXPECTED_BASELINE_VC="${EXPECTED_BASELINE_VC:-201}"
-EXPECTED_CANDIDATE_VC="${EXPECTED_CANDIDATE_VC:-202}"
-export EXPECTED_BASELINE_VC EXPECTED_CANDIDATE_VC
+# Optional sanity pin for the in-place update gate. The gate itself never goes
+# stale: it reads both version codes from the real package dumps and requires the
+# candidate to be exactly baseline+1.
+EXPECTED_BASELINE_VC="${EXPECTED_BASELINE_VC:-}"
+export EXPECTED_BASELINE_VC
 exec > >(tee reports/console.txt) 2>&1
 printf 'Candidate: %s\nBaseline: %s\n' "$APK" "$BASELINE"
 adb shell getprop ro.build.version.sdk
@@ -110,14 +110,18 @@ if [ -d inputs/installed-baseline ]; then
       python3 - <<'CHECK'
 from pathlib import Path
 import os, re
-base_vc=os.environ['EXPECTED_BASELINE_VC'].strip()
-cand_vc=os.environ['EXPECTED_CANDIDATE_VC'].strip()
-assert base_vc.isdigit() and cand_vc.isdigit(), 'Expected version codes must be numeric'
-assert int(cand_vc) > int(base_vc), 'Candidate version must increment for update-in-place'
 before=Path('reports/installed-baseline-package.txt').read_text()
 after=Path('reports/installed-upgrade-package.txt').read_text()
-assert re.search(r'versionCode=%s\b' % base_vc, before), 'Unexpected phone baseline (wanted %s)' % base_vc
-assert re.search(r'versionCode=%s\b' % cand_vc, after), 'Candidate did not install as %s' % cand_vc
+def version_code(text, label):
+    m=re.search(r'versionCode=(\d+)', text)
+    assert m, 'versionCode missing in ' + label
+    return int(m.group(1))
+base_vc=version_code(before,'installed baseline')
+cand_vc=version_code(after,'installed candidate')
+pinned=os.environ.get('EXPECTED_BASELINE_VC','').strip()
+if pinned:
+    assert pinned.isdigit() and base_vc==int(pinned), 'Unexpected phone baseline %s (pinned %s)' % (base_vc,pinned)
+assert cand_vc==base_vc+1, 'Candidate must be exactly the next version code (%s -> %s)' % (base_vc,cand_vc)
 def stamp(text):
     rows=re.findall(r'firstInstallTime=([^\r\n]+)',text)
     assert rows
