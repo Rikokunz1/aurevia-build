@@ -41,6 +41,21 @@
   button.ghost{background:var(--card2);color:var(--text);border:1px solid var(--line)}
   button.sm{width:auto;padding:8px 12px;font-size:13px;border-radius:10px}
   button.danger{background:#33131a;color:#ff8b96;border:1px solid #5a1f2a}
+  /* Pemilih warna badge: bottom sheet asli, bukan window.prompt() yang tidak
+     selalu muncul di WebView aplikasi admin. */
+  .sheetMask{position:fixed;inset:0;background:rgba(6,6,10,.62);backdrop-filter:blur(6px);
+    display:none;align-items:flex-end;z-index:40;padding:12px}
+  .sheetMask.on{display:flex}
+  .sheet{width:100%;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 16px 20px;
+    box-shadow:0 -14px 44px rgba(0,0,0,.5);animation:sheetUp .18s ease-out}
+  @keyframes sheetUp{from{transform:translateY(16px);opacity:.6}to{transform:none;opacity:1}}
+  .swatches{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0 12px}
+  .sw{height:44px;border-radius:13px;border:1px solid rgba(255,255,255,.16);position:relative;
+    display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;font-size:9.5px;
+    font-weight:800;color:#0d0d13;letter-spacing:.2px}
+  .sw.sel{outline:2px solid #fff;outline-offset:2px}
+  .badgeChip{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;
+    color:#101018;letter-spacing:.3px;text-shadow:none;vertical-align:1px}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);
     border-radius:999px;padding:4px 10px;font-size:11.5px;color:var(--muted)}
   .chip.ok{color:var(--ok);border-color:#1d4a2f}
@@ -58,8 +73,10 @@
   nav button{background:transparent;color:var(--muted);padding:11px 6px;border-radius:14px;font-size:11.5px;font-weight:600}
   nav button.on{background:linear-gradient(135deg,rgba(250,45,72,.22),rgba(123,92,255,.22));color:var(--text)}
   .user{display:flex;gap:12px;padding:12px;border-radius:14px;background:var(--card2);margin-bottom:10px;align-items:flex-start}
-  .avatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--violet));
-    display:grid;place-items:center;font-weight:700;flex:0 0 auto;overflow:hidden}
+  .avatar{width:46px;height:46px;border-radius:50%;flex:0 0 auto;overflow:hidden;position:relative;
+    display:grid;place-items:center;font-weight:700;font-size:17px;letter-spacing:.4px;
+    color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);
+    box-shadow:0 3px 10px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.14)}
   .avatar img{width:100%;height:100%;object-fit:cover}
   .name{font-weight:650}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted)}
@@ -180,6 +197,19 @@
   <div id="roomList"></div>
 </section>
 
+<!-- PEMILIH WARNA BADGE -->
+<div class="sheetMask" id="badgeMask">
+  <div class="sheet">
+    <div id="badgeTitle" style="font-weight:700;font-size:15.5px">Beri centang</div>
+    <div id="badgeSub" class="ghosttext" style="margin-top:4px">Pilih warna badge untuk pengguna ini.</div>
+    <div class="swatches" id="badgeSwatches"></div>
+    <div class="row">
+      <button class="ghost grow" id="badgeCancel">Batal</button>
+      <button class="danger grow" id="badgeClear">Hapus centang</button>
+    </div>
+  </div>
+</div>
+
 <nav>
   <button data-view="dashView" class="on">Ringkasan</button>
   <button data-view="pushView">Notifikasi</button>
@@ -210,6 +240,29 @@
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
   }
+  var BADGES = [
+    { id: 'blue',   label: 'Biru',   color: '#3b82f6' },
+    { id: 'green',  label: 'Hijau',  color: '#22c55e' },
+    { id: 'pink',   label: 'Pink',   color: '#ec4899' },
+    { id: 'purple', label: 'Ungu',   color: '#8b5cf6' },
+    { id: 'gold',   label: 'Emas',   color: '#eab308' },
+    { id: 'yellow', label: 'Kuning', color: '#facc15' },
+    { id: 'amber',  label: 'Amber',  color: '#f59e0b' },
+    { id: 'red',    label: 'Merah',  color: '#ef4444' },
+    { id: 'white',  label: 'Putih',  color: '#e5e7eb' },
+    { id: 'silver', label: 'Silver', color: '#cbd5e1' }
+  ];
+  function badgeColor(id){
+    for (var i = 0; i < BADGES.length; i++) if (BADGES[i].id === id) return BADGES[i].color;
+    return '#6b7280';
+  }
+  function avatarHue(seed){
+    var h = 0;
+    for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+    // keep the hue away from muddy yellow-green so white initials stay legible
+    return (h + 200) % 360;
+  }
+
   function api(path, opts){
     opts = opts || {};
     var headers = { 'Accept':'application/json' };
@@ -330,6 +383,7 @@
     }).finally(function(){ $('pushSend').disabled = false; });
   };
 
+  var lastUsers = [];
   function searchUsers(){
     var q = $('userQuery').value.trim();
     var role = $('userRole').value;
@@ -338,18 +392,28 @@
     if (role) qs.push('role=' + encodeURIComponent(role));
     api('/v1/admin/users' + (qs.length ? '?' + qs.join('&') : '')).then(function(d){
       $('userList').dataset.loaded = '1';
+      lastUsers = d.users || [];
       if (!d.users.length) { $('userList').innerHTML = '<div class="ghosttext">Tidak ada pengguna.</div>'; return; }
       $('userList').innerHTML = d.users.map(function(u){
         var initial = esc((u.name || u.username || '?').trim().charAt(0).toUpperCase());
-        var avatar = u.photo ? '<img src="' + esc(u.photo.indexOf('http') === 0 ? u.photo : BASE + u.photo) + '" alt="">' : initial;
+        var hue = avatarHue(u.username || u.name || '?');
+        var photoUrl = u.photo ? (u.photo.indexOf('http') === 0 ? u.photo : BASE + u.photo) : '';
+        // Every account gets a readable avatar even without a profile photo: a stable hue derived
+        // from the username, so the list never shows blank circles or a single identical tile.
+        var avatarStyle = 'background:linear-gradient(135deg,hsl(' + hue + ',72%,52%),hsl(' + ((hue + 42) % 360) + ',68%,38%))';
+        var avatar = (photoUrl ? '<img src="' + esc(photoUrl) + '" alt="" onerror="this.remove()">' : '') + initial;
         return '<div class="user" data-u="' + esc(u.username) + '">' +
-          '<div class="avatar">' + avatar + '</div>' +
+          '<div class="avatar" style="' + avatarStyle + '">' + avatar + '</div>' +
           '<div class="grow">' +
             '<div class="name">' + esc(u.name || u.username) + ' <span class="pill ' + esc(u.role) + '">' + esc(u.role) + '</span></div>' +
-            '<div class="mono">@' + esc(u.username) + (u.verified ? ' · ✔ terverifikasi' : '') + (u.badge ? ' · badge ' + esc(u.badge) : '') + '</div>' +
+            '<div class="mono">@' + esc(u.username) + (u.verified ? ' · ✔ terverifikasi' : '') +
+              (u.badge ? ' · <span class="badgeChip" style="background:' + badgeColor(u.badge) + '">' + esc(u.badge) + '</span>' : '') + '</div>' +
             '<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">' +
               '<button class="sm ghost" data-act="role" data-u="' + esc(u.username) + '" data-role="' + esc(u.role) + '">Ubah role</button>' +
-              '<button class="sm ' + (u.verified ? 'danger' : 'ghost') + '" data-act="verify" data-u="' + esc(u.username) + '" data-verified="' + (u.verified ? '1' : '0') + '">' + (u.verified ? 'Hapus centang' : 'Beri centang') + '</button>' +
+              (u.verified
+                ? '<button class="sm danger" data-act="verify" data-u="' + esc(u.username) + '" data-verified="1">Hapus centang</button>'
+                : '<button class="sm ghost" data-act="verify" data-u="' + esc(u.username) + '" data-verified="0">Beri centang</button>') +
+              '<button class="sm ghost" data-act="badge" data-u="' + esc(u.username) + '">' + (u.badge ? 'Ganti warna' : 'Warna badge') + '</button>' +
             '</div>' +
           '</div>' +
         '</div>';
@@ -363,16 +427,68 @@
   $('userQuery').addEventListener('keydown', function(e){ if (e.key === 'Enter') searchUsers(); });
   $('userRole').onchange = searchUsers;
 
+  // ---- Pemilih warna badge (bottom sheet) ----
+  var badgeTarget = { username: '', current: '', mode: 'grant' };
+  function closeBadgeSheet(){ $('badgeMask').classList.remove('on'); }
+  function openBadgeSheet(username, mode){
+    badgeTarget.username = username;
+    badgeTarget.mode = mode;
+    badgeTarget.current = '';
+    lastUsers.forEach(function(u){ if (u.username === username && u.badge) badgeTarget.current = u.badge; });
+    $('badgeTitle').textContent = (mode === 'grant' ? 'Beri centang @' : 'Warna badge @') + username;
+    $('badgeSub').textContent = mode === 'grant'
+      ? 'Centang otomatis aktif. Pilih warnanya:'
+      : (badgeTarget.current ? 'Warna sekarang: ' + badgeTarget.current : 'Pengguna ini belum punya badge.');
+    var html = '';
+    BADGES.forEach(function(b){
+      html += '<div class="sw' + (b.id === badgeTarget.current ? ' sel' : '') + '" data-badge="' + b.id +
+        '" style="background:' + b.color + '">' + esc(b.label) + '</div>';
+    });
+    $('badgeSwatches').innerHTML = html;
+    $('badgeMask').classList.add('on');
+  }
+  $('badgeSwatches').addEventListener('click', function(e){
+    var el = e.target.closest('.sw');
+    if (!el) return;
+    var colour = el.getAttribute('data-badge');
+    var username = badgeTarget.username;
+    api('/v1/admin/role', { body: { username: username, verified: true, badge: colour } }).then(function(){
+      closeBadgeSheet();
+      toast('@' + username + ' bercentang ' + colour, 'ok');
+      searchUsers();
+    }).catch(function(err){ toast(err.message || 'Gagal menyimpan badge', 'err'); });
+  });
+  $('badgeCancel').onclick = closeBadgeSheet;
+  $('badgeMask').addEventListener('click', function(e){ if (e.target === $('badgeMask')) closeBadgeSheet(); });
+  $('badgeClear').onclick = function(){
+    var username = badgeTarget.username;
+    api('/v1/admin/role', { body: { username: username, verified: false, badge: '' } }).then(function(){
+      closeBadgeSheet();
+      toast('Centang @' + username + ' dihapus', 'ok');
+      searchUsers();
+    }).catch(function(err){ toast(err.message || 'Gagal', 'err'); });
+  };
+
   $('userList').addEventListener('click', function(e){
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
     var username = btn.getAttribute('data-u');
     if (btn.getAttribute('data-act') === 'verify') {
-      var next = btn.getAttribute('data-verified') !== '1';
-      api('/v1/admin/role', { body: { username: username, verified: next } }).then(function(){
-        toast(next ? 'Centang diberikan ke @' + username : 'Centang @' + username + ' dihapus', 'ok');
-        searchUsers();
-      }).catch(function(err){ toast(err.message || 'Gagal', 'err'); });
+      // Sudah bercentang -> tombol ini berarti "hapus centang", jadi langsung proses.
+      if (btn.getAttribute('data-verified') === '1') {
+        api('/v1/admin/role', { body: { username: username, verified: false, badge: '' } }).then(function(){
+          toast('Centang @' + username + ' dihapus', 'ok');
+          searchUsers();
+        }).catch(function(err){ toast(err.message || 'Gagal', 'err'); });
+        return;
+      }
+      // Belum bercentang -> sheet centang + warna sekaligus.
+      openBadgeSheet(username, 'grant');
+      return;
+    }
+    if (btn.getAttribute('data-act') === 'badge') {
+      openBadgeSheet(username, 'colour');
+      return;
     }
     if (btn.getAttribute('data-act') === 'role') {
       var current = btn.getAttribute('data-role');
@@ -423,7 +539,7 @@
   }
   // End-to-end readiness signal: reaches logcat via WebChromeClient, so a blank shell
   // cannot masquerade as a working panel during automated launch tests.
-  console.log('PANEL_READY 1.2.0 nav=' + document.querySelectorAll('nav button').length +
+  console.log('PANEL_READY 1.2.1 nav=' + document.querySelectorAll('nav button').length +
     ' browsers=' + (document.getElementById('loginView') ? 'login' : 'missing'));
 })();
 </script>
