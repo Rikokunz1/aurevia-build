@@ -6,11 +6,11 @@ on:
       version_name:
         description: "versionName aplikasi admin"
         required: false
-        default: "1.0.0"
+        default: "1.1.0"
       version_code:
         description: "versionCode aplikasi admin"
         required: false
-        default: "1"
+        default: "2"
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble admin APK (no Gradle)
+    name: Assemble admin APK (icon, no Gradle)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -51,21 +51,33 @@ jobs:
           echo "SIGNING_BT=$BT" >> "$GITHUB_ENV"
           test -x "$SDK/build-tools/$BT/aapt2"
 
-      - name: Validasi struktur sumber
+      - name: Validasi sumber + identitas paket
         run: |
           set -euo pipefail
           test -f admin-app/AndroidManifest.xml
           test -f admin-app/MainActivity.java
           test -f admin-app/admin.html
-          grep -q 'package="app.aurevia.admin"' admin-app/AndroidManifest.xml
-          grep -q 'aurevia.rixxstore.my.id' admin-app/admin.html
           python3 - <<'PY'
           import re
-          html = open('admin-app/admin.html', encoding='utf-8').read()
-          # The panel must never reference a CDN: the APK is offline-first and CSP-hostile previews.
-          assert not re.search(r'(src|href)\s*=\s*["\']https?://(?!aurevia\.rixxstore\.my\.id)', html), 'external asset reference'
+          from pathlib import Path
+          manifest = Path('admin-app/AndroidManifest.xml').read_text()
+          java = Path('admin-app/MainActivity.java').read_text()
+          pkg = re.search(r'package="([^"]+)"', manifest).group(1)
+          jpkg = re.search(r'^package\s+([\w.]+);', java, re.M).group(1)
+          # This mismatch is what made v1.0.0 crash on launch (ActivityNotFoundException).
+          assert pkg == jpkg == 'app.aurevia.admin', (pkg, jpkg)
+          assert 'android:icon="@mipmap/ic_launcher"' in manifest
+          assert 'android:roundIcon="@mipmap/ic_launcher_round"' in manifest
+          assert 'android:name=".MainActivity"' in manifest
+          for dpi in ('mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'):
+              for name in ('ic_launcher.png', 'ic_launcher_round.png'):
+                  p = Path('admin-app/res/mipmap-%s/%s' % (dpi, name))
+                  assert p.is_file() and p.stat().st_size > 500, p
+          html = Path('admin-app/admin.html').read_text()
+          assert not re.search(r'(src|href)\s*=\s*["\']https?://(?!aurevia\.rixxstore\.my\.id)', html)
+          assert 'data:image/png;base64,' in html, 'logo mark missing'
           assert 'localStorage' in html and '/v1/admin/push' in html
-          print('panel OK', len(html), 'bytes')
+          print('identity %s OK, panel %d bytes' % (pkg, len(html)))
           PY
 
       - name: Compile Java -> dex
@@ -73,13 +85,30 @@ jobs:
           set -euo pipefail
           BT="$ANDROID_HOME/build-tools/$SIGNING_BT"
           ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
-          test -f "$ANDROID_JAR"
-          rm -rf /tmp/admin-build && mkdir -p /tmp/admin-build/classes /tmp/admin-build/dex
+          rm -rf /tmp/admin-build && mkdir -p /tmp/admin-build/classes /tmp/admin-build/dex /tmp/admin-build/res
           javac -source 8 -target 8 -Xlint:-options -bootclasspath "$ANDROID_JAR" \
             -d /tmp/admin-build/classes admin-app/MainActivity.java
           "$BT/d8" --release --min-api 26 --lib "$ANDROID_JAR" \
             --output /tmp/admin-build/dex $(find /tmp/admin-build/classes -name '*.class')
+          # The dex must contain the very class the manifest resolves.
+          strings /tmp/admin-build/dex/classes.dex | grep -F 'Lapp/aurevia/admin/MainActivity;' > /dev/null \
+            || { echo 'MainActivity missing from dex'; exit 1; }
+          strings /tmp/admin-build/dex/classes.dex | grep -F 'com/aurevia/admin/MainActivity' > /dev/null \
+            && { echo 'stale com.aurevia.admin class still present'; exit 1; } || true
           ls -l /tmp/admin-build/dex
+
+      - name: Compile resources (launcher icon)
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/$SIGNING_BT"
+          "$BT/aapt2" compile --dir admin-app/res -o /tmp/admin-build/res || {
+            # older aapt2 needs one file per invocation
+            for f in admin-app/res/mipmap-*/*.png; do
+              "$BT/aapt2" compile "$f" -o /tmp/admin-build/res || exit 1
+            done
+          }
+          ls /tmp/admin-build/res | head -5
+          test -n "$(ls /tmp/admin-build/res)"
 
       - name: Link resources + assets
         run: |
@@ -99,10 +128,12 @@ jobs:
             -I "$ANDROID_JAR" \
             --manifest /tmp/admin-build/AndroidManifest.xml \
             -A /tmp/admin-build/assets \
+            -R /tmp/admin-build/res/*.flat \
             --min-sdk-version 26 --target-sdk-version 35 \
             --no-version-vectors
-          cd /tmp/admin-build/dex && zip -q -X ../out/base.apk classes.dex
-          unzip -l /tmp/admin-build/out/base.apk | tail -8
+          ( cd /tmp/admin-build/dex && zip -q -X ../out/base.apk classes.dex )
+          unzip -l /tmp/admin-build/out/base.apk | tail -12
+          unzip -l /tmp/admin-build/out/base.apk | grep -q 'res/'
 
       - name: Restore signing keystore
         run: |
@@ -130,10 +161,11 @@ jobs:
             --out "/tmp/admin-build/out/Aurevia-Admin-v${VN}.apk" /tmp/admin-build/out/aligned.apk
           APK="/tmp/admin-build/out/Aurevia-Admin-v${VN}.apk"
           "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$APK" | tee /tmp/admin-signature.txt
-          "$BT/aapt" dump badging "$APK" | tee /tmp/admin-badging.txt | head -3
-          grep -F "package: name='app.aurevia.admin'" /tmp/admin-badging.txt > /dev/null
+          "$BT/aapt" dump badging "$APK" | tee /tmp/admin-badging.txt | head -4
+          grep -F "package: name='app.aurevia.admin' versionCode='${{ inputs.version_code }}'" /tmp/admin-badging.txt > /dev/null
+          grep -F "launchable-activity: name='app.aurevia.admin.MainActivity'" /tmp/admin-badging.txt > /dev/null
+          "$BT/aapt" dump badging "$APK" | grep -E "application-icon-(160|640)" > /dev/null || { echo 'launcher icon missing'; exit 1; }
           unzip -tq "$APK"
-          unzip -l "$APK" | grep -q 'assets/admin.html'
           sha256sum "$APK" | tee /tmp/admin-sha.txt
           stat -c '%s byte' "$APK"
 
@@ -148,3 +180,74 @@ jobs:
             /tmp/admin-badging.txt
           retention-days: 30
           if-no-files-found: error
+
+  launch-proof:
+    name: Launch proof on emulator
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 35]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: aurevia-admin-apk
+          path: artifacts
+
+      - name: Free disk before emulator
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Emulator install + launch
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: default
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 900
+          script: |
+            set -euxo pipefail
+            APK=$(ls artifacts/Aurevia-Admin-v*.apk | head -1)
+            mkdir -p reports
+            adb install --no-streaming "$APK" 2>&1 | tee reports/install.txt
+            adb shell pm list packages | grep -F app.aurevia.admin
+            adb shell am start -W -n app.aurevia.admin/app.aurevia.admin.MainActivity 2>&1 | tee reports/launch.txt
+            sleep 12
+            adb shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | tee reports/focus.txt
+            grep -F 'app.aurevia.admin' reports/focus.txt
+            # A force close leaves the activity gone and a crash in logcat.
+            ! adb logcat -d -v brief | grep -E "FATAL EXCEPTION|ActivityNotFoundException" | tee reports/crash.txt
+            adb exec-out screencap -p > reports/screen.png
+            adb shell pidof app.aurevia.admin | tee reports/pid.txt
+            test -s reports/pid.txt
+
+      - name: Upload launch evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-launch-api-${{ matrix.api }}
+          path: reports
+          retention-days: 30
