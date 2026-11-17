@@ -180,6 +180,23 @@ object AdminApi {
         return call("/v1/admin/role", body, method = "POST")
     }
 
+    // ---------- Batch 210: ban permanen + blokir IP, mute, toast saat buka aplikasi ----------
+    /** Ban / lepas ban. `blockIp` ikut memblokir IP terakhir akun itu (default dari server). */
+    suspend fun ban(username: String, banned: Boolean, reason: String = "", blockIp: Boolean = true): JSONObject =
+        call("/v1/admin/ban", jof("username" to username, "banned" to banned, "reason" to reason, "blockIp" to blockIp), method = "POST")
+
+    /** Mute: akun tetap bisa masuk, tetapi tidak bisa membuat Live/room. */
+    suspend fun mute(username: String, muted: Boolean): JSONObject =
+        call("/v1/admin/mute", jof("username" to username, "muted" to muted), method = "POST")
+
+    suspend fun bannedList(): JSONObject = call("/v1/admin/banned")
+
+    /** Toast yang muncul saat pengguna membuka aplikasi (bukan toast login/daftar). */
+    suspend fun setAppToast(text: String, enabled: Boolean): JSONObject =
+        call("/v1/admin/app-toast", jof("text" to text, "enabled" to enabled), method = "POST")
+
+    suspend fun appToast(): JSONObject = call("/v1/app/toast", token = "")
+
     suspend fun notify(title: String, message: String, audience: String, username: String? = null): JSONObject {
         val body = jof("title" to title, "body" to message, "audience" to audience, "openNotifications" to true)
         if (!username.isNullOrBlank()) body.put("username", username)
