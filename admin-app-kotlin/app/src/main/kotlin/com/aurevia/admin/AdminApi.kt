@@ -191,6 +191,10 @@ object AdminApi {
 
     suspend fun bannedList(): JSONObject = call("/v1/admin/banned")
 
+    /** Lepas blokir IP manual (mis. WiFi publik yang dipakai banyak orang). */
+    suspend fun banIp(ip: String, banned: Boolean): JSONObject =
+        call("/v1/admin/ban-ip", jof("ip" to ip, "banned" to banned), method = "POST")
+
     /** Toast yang muncul saat pengguna membuka aplikasi (bukan toast login/daftar). */
     suspend fun setAppToast(text: String, enabled: Boolean): JSONObject =
         call("/v1/admin/app-toast", jof("text" to text, "enabled" to enabled), method = "POST")
