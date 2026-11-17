@@ -37,12 +37,14 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -251,6 +253,7 @@ private fun AdminShell(onLogout: () -> Unit) {
         Tab("Ringkasan", Icons.Filled.Home),
         Tab("Pengguna", Icons.Filled.Person),
         Tab("Siarkan", Icons.Filled.Send),
+        Tab("Moderasi", Icons.Filled.Warning),
         Tab("Info", Icons.Filled.Info),
     )
     Scaffold(
@@ -280,6 +283,7 @@ private fun AdminShell(onLogout: () -> Unit) {
                 0 -> OverviewScreen()
                 1 -> UsersScreen()
                 2 -> BroadcastScreen()
+                3 -> ModerationScreen()
                 else -> InfoScreen(onLogout = onLogout)
             }
         }
@@ -509,6 +513,12 @@ private fun UserDialog(
     var busy by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf("") }
     var confirmRole by remember { mutableStateOf(false) }
+    // Batch 210: mute & ban langsung dari detail akun.
+    var muted by remember { mutableStateOf(user.optBoolean("muted")) }
+    var banned by remember { mutableStateOf(user.optBoolean("banned")) }
+    var confirmBan by remember { mutableStateOf(false) }
+    var banReason by remember { mutableStateOf(user.s("banReason")) }
+    var blockIp by remember { mutableStateOf(true) }
     // Changing your own role from the panel is exactly how a developer locked themselves out;
     // the server refuses it now, and the UI must not even offer the option.
     val isSelf = user.s("username").equals(AdminSession.username, ignoreCase = true)
@@ -517,6 +527,9 @@ private fun UserDialog(
     val iAmDeveloper = AdminSession.role == "developer"
     val targetIsDeveloper = user.s("role") == "developer"
     val roleEditable = AdminSession.isOwnerLevel && !isSelf && (iAmDeveloper || !targetIsDeveloper)
+    // Developer dilindungi: owner tidak boleh menindak akun developer, dan akun sendiri tidak
+    // bisa dimoderasi (biar tidak terkunci sendiri). Aturan sama dengan server.
+    val canModerate = AdminSession.isOwnerLevel && !isSelf && (iAmDeveloper || !targetIsDeveloper)
 
     fun save() {
         if (busy) return
@@ -537,6 +550,51 @@ private fun UserDialog(
             } catch (e: Exception) {
                 localError = e.message ?: "Gagal menyimpan."
                 onError(localError)
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun toggleMute() {
+        if (busy) return
+        busy = true
+        localError = ""
+        scope.launch {
+            try {
+                val r = AdminApi.mute(user.s("username"), !muted)
+                muted = r.optBoolean("muted", !muted)
+                onSaved(if (muted) "@${user.s("username")} dibisukan (tidak bisa Live/room)" else "@${user.s("username")} bisa Live lagi")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                localError = e.message ?: "Gagal mengubah mute."
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun applyBan(bannedNow: Boolean) {
+        if (busy) return
+        busy = true
+        localError = ""
+        scope.launch {
+            try {
+                val r = AdminApi.ban(user.s("username"), bannedNow, banReason.trim(), blockIp)
+                banned = r.optBoolean("banned", bannedNow)
+                val ip = r.s("blockedIp")
+                onSaved(
+                    when {
+                        !banned -> "@${user.s("username")} dibuka blokirnya"
+                        ip.isNotBlank() -> "@${user.s("username")} diblokir permanen + IP $ip diblokir"
+                        else -> "@${user.s("username")} diblokir permanen"
+                    },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                localError = e.message ?: "Gagal menerapkan blokir."
             } finally {
                 busy = false
             }
@@ -608,6 +666,52 @@ private fun UserDialog(
                     "Hanya developer yang bisa mengangkat akun menjadi developer.",
                     color = AdminMuted, fontSize = 11.sp,
                 )
+                HorizontalDivider(color = AdminStroke, modifier = Modifier.padding(vertical = 6.dp))
+                Text("Moderasi", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                if (!canModerate) {
+                    Text(
+                        when {
+                            isSelf -> "Akun kamu sendiri tidak bisa dimoderasi dari panel."
+                            targetIsDeveloper && !iAmDeveloper -> "Akun developer dilindungi."
+                            AdminSession.role == "admin" -> "Butuh role owner/developer untuk mute & blokir."
+                            else -> "Tidak tersedia untuk akun ini."
+                        },
+                        fontSize = 11.sp, color = AdminMuted,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = muted,
+                        enabled = canModerate && !busy,
+                        onCheckedChange = { toggleMute() },
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Bisukan akun", fontSize = 12.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Tetap bisa masuk, tapi tidak bisa membuat Live/room.",
+                            fontSize = 10.5.sp, color = AdminMuted,
+                        )
+                    }
+                }
+                if (banned) {
+                    Text(
+                        "Akun ini DIBLOKIR PERMANEN" + (user.s("banReason").ifBlank { "" }.let { if (it.isBlank()) "" else " · alasan: $it" }),
+                        fontSize = 11.sp, color = AdminRed, fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Button(
+                    onClick = { if (banned) applyBan(false) else confirmBan = true },
+                    enabled = canModerate && !busy,
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (banned) AdminStroke else AdminRed.copy(alpha = 0.16f),
+                        contentColor = if (banned) AdminInk else AdminRed,
+                    ),
+                ) {
+                    Text(if (banned) "Lepas blokir permanen" else "Blokir permanen + IP", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                }
                 if (localError.isNotBlank()) Text(localError, color = AdminRed, fontSize = 12.sp)
             }
         },
@@ -619,6 +723,48 @@ private fun UserDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Tutup", color = AdminMuted) } },
     )
+
+    if (confirmBan) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirmBan = false },
+            containerColor = AdminCardBg,
+            titleContentColor = AdminInk,
+            textContentColor = AdminMuted,
+            title = { Text("Blokir @${user.s("username")} permanen?", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Semua sesi akun ini langsung diputus dan akun tidak bisa masuk lagi sampai diblokir dibuka.",
+                        fontSize = 12.5.sp,
+                    )
+                    OutlinedTextField(
+                        banReason, { banReason = it.take(160) }, Modifier.fillMaxWidth(),
+                        label = { Text("Alasan (opsional)") }, singleLine = true,
+                        shape = RoundedCornerShape(14.dp), enabled = !busy,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = blockIp, onCheckedChange = { blockIp = it }, enabled = !busy)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Blokir IP terakhir", fontSize = 12.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Mencegah akun baru dibuat dari jaringan yang sama. Hati-hati kalau akun memakai WiFi publik.",
+                                fontSize = 10.5.sp, color = AdminMuted,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmBan = false; applyBan(true) }, enabled = !busy) {
+                    Text("Blokir sekarang", color = AdminRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBan = false }, enabled = !busy) { Text("Batal", color = AdminMuted) }
+            },
+        )
+    }
 
     if (confirmRole) {
         val current = user.s("role").ifBlank { "user" }
@@ -742,6 +888,215 @@ private fun BroadcastScreen() {
                 else Text("Kirim pengumuman", fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ moderasi */
+
+/**
+ * Moderasi (batch 210): pesan singkat yang muncul SAAT APLIKASI DIBUKA — sengaja dipisah dari
+ * "Siarkan" supaya tidak tertukar dengan notifikasi dan dengan toast donasi login/daftar —
+ * plus daftar akun yang diblokir permanen, IP yang diblokir, dan akun yang dibisukan.
+ */
+@Composable
+private fun ModerationScreen() {
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf("") }
+    var enabled by remember { mutableStateOf(false) }
+    var savedVersion by remember { mutableStateOf(0L) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
+
+    var bannedUsers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var bannedIps by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var mutedUsers by remember { mutableStateOf<List<String>>(emptyList()) }
+    var reloadTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(reloadTick) {
+        try {
+            val data = AdminApi.bannedList()
+            bannedUsers = data.optJSONArray("users")?.list().orEmpty()
+            bannedIps = data.optJSONArray("ips")?.list().orEmpty()
+            mutedUsers = data.optJSONArray("muted")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }.orEmpty()
+            error = ""
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.message ?: "Gagal memuat daftar moderasi."
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        // Isi dulu dengan teks toast yang sedang aktif di server.
+        runCatching { AdminApi.appToast() }.getOrNull()?.let {
+            text = it.s("text")
+            enabled = it.optBoolean("enabled")
+            savedVersion = it.optLong("version")
+        }
+    }
+
+    fun saveToast() {
+        if (busy) return
+        busy = true
+        error = ""
+        result = ""
+        scope.launch {
+            try {
+                val r = AdminApi.setAppToast(text.trim(), enabled && text.isNotBlank())
+                savedVersion = r.optLong("version")
+                enabled = r.optBoolean("enabled")
+                result = if (enabled) "Toast aktif — akan muncul sekali per perangkat saat aplikasi dibuka."
+                else "Toast dimatikan."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "Gagal menyimpan toast."
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun unban(username: String) {
+        scope.launch {
+            try {
+                AdminApi.ban(username, false)
+                result = "@$username dibuka blokirnya."
+                reloadTick++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "Gagal membuka blokir."
+            }
+        }
+    }
+
+    fun unmute(username: String) {
+        scope.launch {
+            try {
+                AdminApi.mute(username, false)
+                result = "@$username bisa Live lagi."
+                reloadTick++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "Gagal mengubah mute."
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()) {
+        ScreenHeader("Moderasi", "Toast saat buka aplikasi, blokir permanen, dan mute.", onRefresh = { reloadTick++ })
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+            Text("Toast saat aplikasi dibuka", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold)
+            Text(
+                "Muncul sekali di bawah layar setiap kali pengguna membuka aplikasi (teks baru = tampil lagi). " +
+                    "Ini bukan notifikasi HP dan bukan toast donasi setelah login.",
+                fontSize = 11.sp, color = AdminMuted,
+            )
+            OutlinedTextField(
+                text, { text = it.take(300) }, Modifier.fillMaxWidth().height(110.dp),
+                label = { Text("Teks toast") },
+                shape = RoundedCornerShape(16.dp), enabled = !busy && AdminSession.isOwnerLevel,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { enabled = it },
+                    enabled = !busy && AdminSession.isOwnerLevel,
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (enabled) "Aktif" else "Mati", fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                    if (savedVersion > 0) {
+                        Text("Versi terakhir: $savedVersion", fontSize = 10.5.sp, color = AdminMuted)
+                    }
+                }
+            }
+            Button(
+                onClick = { saveToast() },
+                enabled = !busy && AdminSession.isOwnerLevel,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AdminRed, contentColor = Color.White),
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                else Text("Simpan toast", fontWeight = FontWeight.Bold)
+            }
+            if (error.isNotBlank()) ErrorBanner(error)
+            if (result.isNotBlank()) InfoCard("Berhasil", result)
+
+            HorizontalDivider(color = AdminStroke, modifier = Modifier.padding(vertical = 6.dp))
+
+            Text("Diblokir permanen (${bannedUsers.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold)
+            if (bannedUsers.isEmpty()) {
+                Text("Belum ada akun yang diblokir.", fontSize = 11.5.sp, color = AdminMuted)
+            } else {
+                bannedUsers.forEach { u ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("@${u.s("username")}", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                listOfNotNull(
+                                    u.s("reason").ifBlank { null }?.let { "alasan: $it" },
+                                    u.s("lastIp").ifBlank { null }?.let { "IP: $it" },
+                                ).joinToString(" · ").ifBlank { "tanpa keterangan" },
+                                fontSize = 10.5.sp, color = AdminMuted,
+                            )
+                        }
+                        TextButton(onClick = { unban(u.s("username")) }, enabled = AdminSession.isOwnerLevel) {
+                            Text("Buka blokir", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+
+            Text("IP diblokir (${bannedIps.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+            if (bannedIps.isEmpty()) {
+                Text("Belum ada IP yang diblokir.", fontSize = 11.5.sp, color = AdminMuted)
+            } else {
+                bannedIps.forEach { ip ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(ip.s("ip"), fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                            Text("@${ip.s("username")} · oleh ${ip.s("by")}", fontSize = 10.5.sp, color = AdminMuted)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+
+            Text("Dibisukan (${mutedUsers.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+            if (mutedUsers.isEmpty()) {
+                Text("Tidak ada akun yang dibisukan.", fontSize = 11.5.sp, color = AdminMuted)
+            } else {
+                mutedUsers.forEach { username ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("@$username", Modifier.weight(1f), fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
+                        TextButton(onClick = { unmute(username) }, enabled = AdminSession.isOwnerLevel) {
+                            Text("Bunyikan", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
