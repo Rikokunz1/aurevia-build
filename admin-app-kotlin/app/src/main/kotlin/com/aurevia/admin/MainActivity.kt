@@ -973,6 +973,20 @@ private fun ModerationScreen() {
         }
     }
 
+    fun unbanIp(ip: String) {
+        scope.launch {
+            try {
+                AdminApi.banIp(ip, false)
+                result = "Blokir IP $ip dilepas."
+                reloadTick++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "Gagal melepas blokir IP."
+            }
+        }
+    }
+
     fun unmute(username: String) {
         scope.launch {
             try {
@@ -1072,6 +1086,9 @@ private fun ModerationScreen() {
                         Column(Modifier.weight(1f)) {
                             Text(ip.s("ip"), fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
                             Text("@${ip.s("username")} · oleh ${ip.s("by")}", fontSize = 10.5.sp, color = AdminMuted)
+                        }
+                        TextButton(onClick = { unbanIp(ip.s("ip")) }, enabled = AdminSession.isOwnerLevel) {
+                            Text("Lepas", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
