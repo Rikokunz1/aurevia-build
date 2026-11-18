@@ -12,17 +12,24 @@ android {
         applicationId = "com.aurevia.admin"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "2.0.4"
+        versionCode = 26
+        versionName = "2.2.0"
     }
 
     buildFeatures { compose = true }
 
+    // Lint tidak dijalankan: aplikasi internal, dan lintVitalAnalyzeRelease
+    // memakan ~250 MB sehingga daemon Gradle dibunuh di mesin 2 GB ini.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sideloaded internal app: signed with the standard debug key so it installs on the
-            // owner's phone without a separate keystore secret.
+            // Aplikasi internal, dipasang sendiri: ditandatangani debug key supaya
+            // bisa dibangun tanpa menyimpan keystore terpisah.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -40,10 +47,15 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// Mesin build ini RAM 2 GB tanpa swap: jangan strip .so, cukup dikemas apa adanya.
+android {
+    packaging {
+        jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/*.so" }
+    }
 }
