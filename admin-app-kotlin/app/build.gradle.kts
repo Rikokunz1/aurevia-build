@@ -12,8 +12,8 @@ android {
         applicationId = "com.aurevia.admin"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.2.0"
+        versionCode = 27
+        versionName = "3.0.0"
     }
 
     buildFeatures { compose = true }
