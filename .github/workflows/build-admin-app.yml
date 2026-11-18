@@ -94,12 +94,16 @@ jobs:
             --java "$KERJA/gen" --auto-add-overlay
           find "$KERJA/gen" -name '*.java' > "$KERJA/sumber.txt"
           echo admin-app/MainActivity.java >> "$KERJA/sumber.txt"
-          javac -source 17 -target 17 -bootclasspath "$PLATFORM/android.jar" \
+          # -bootclasspath tidak diizinkan bersama target 17; cukup -classpath.
+          javac -encoding UTF-8 -source 17 -target 17 -classpath "$PLATFORM/android.jar" \
             -d "$KERJA/classes" @"$KERJA/sumber.txt"
           find "$KERJA/classes" -name '*.class' > "$KERJA/kelas.txt"
           "$BT/d8" --lib "$PLATFORM/android.jar" --min-api 26 --output "$KERJA/dex" @"$KERJA/kelas.txt"
           cp "$KERJA/base.apk" "$KERJA/unsigned.apk"
-          (cd "$KERJA" && zip -q -j unsigned.apk dex/classes.dex && zip -q unsigned.apk assets/admin.html)
+          mkdir -p "$KERJA/zip/assets"
+          cp "$KERJA/assets/admin.html" "$KERJA/zip/assets/"
+          cp "$KERJA/dex/classes.dex" "$KERJA/zip/"
+          (cd "$KERJA/zip" && zip -q -r ../unsigned.apk assets classes.dex)
           "$BT/zipalign" -f 4 "$KERJA/unsigned.apk" "$KERJA/aligned.apk"
           keytool -genkeypair -keystore "$KERJA/debug.keystore" -storepass android -keypass android \
             -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
