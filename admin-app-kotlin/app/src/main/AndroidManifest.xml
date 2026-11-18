@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aurevia Admin — panel Kotlin/Compose.
+  Paket com.aurevia.admin sengaja sama dengan rilis sebelumnya supaya pembaruan
+  bisa menimpa versi lama (asalkan sertifikatnya sama).
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Aurevia Admin"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AureviaAdmin">
+        android:theme="@style/Theme.AureviaAdmin"
+        android:usesCleartextTraffic="false">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
