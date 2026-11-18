@@ -1,23 +1,22 @@
-name: Build Aurevia Admin APK (panel HTML)
+name: Build Aurevia Admin APK (Kotlin/Compose)
 
-# Batch 239 — APK admin dirakit dari admin-app/ (panel HTML + shell WebView Java).
+# Batch 240 — APK admin Kotlin/Compose asli (tanpa WebView).
 #
-# Panel Compose (admin-app-kotlin) tidak lengkap di repo ini: hanya berkas Gradle
-# tanpa satu pun sumber .kt, jadi task :app:assembleRelease tidak punya apa pun
-# untuk dikompilasi. Yang lengkap dan bisa dibangun adalah admin-app/: satu
-# admin.html + MainActivity.java + res/. Workflow ini merakit itu.
+# Sumbernya: admin-app-kotlin/ (satu MainActivity.kt berisi panel penuh:
+# beranda, pengguna, efek premium, room, siaran, plus pemilih role kustom).
+# Paket com.aurevia.admin — sama dengan rilis admin sebelumnya.
 
 on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: "Versi tampilan (mis. 2.1.0)"
+        description: "Versi tampilan (mis. 2.2.0)"
         required: false
-        default: "2.1.0"
+        default: "2.2.0"
       version_code:
         description: "versionCode"
         required: false
-        default: "25"
+        default: "26"
 
 permissions:
   contents: read
@@ -28,9 +27,9 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble Aurevia Admin (HTML panel)
+    name: Assemble Aurevia Admin (Compose)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,77 +49,70 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           ls "$SDK/platforms"
 
-      - name: Panel & sumber wajib ada
+      - name: Sumber wajib ada
         run: |
           set -e
-          for f in admin-app/AndroidManifest.xml admin-app/MainActivity.java admin-app/admin.html; do
-            test -f "$f" || { echo "HILANG: $f"; exit 1; }
-            echo "ok $f ($(wc -c < "$f") byte)"
-          done
-          # Panel harus memuat pemilih role & efek premium (batch 239).
-          grep -q 'id="roleMask"' admin-app/admin.html
-          grep -q 'id="effectMask"' admin-app/admin.html
-          grep -q '/v1/admin/effects' admin-app/admin.html
-          echo "panel memuat pemilih role kustom & efek premium"
+          test -f admin-app-kotlin/app/src/main/AndroidManifest.xml
+          test -f admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
+          # Panel harus memuat efek premium & role kustom (batch 240).
+          grep -q 'EfekPremium' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
+          grep -q 'RoleBaku' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
+          grep -q '/v1/admin/effects' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
+          # Tidak boleh ada WebView lagi.
+          if grep -q 'WebView' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt; then
+            echo "MASIH ADA WebView"; exit 1
+          fi
+          echo "sumber bersih: Compose, tanpa WebView"
 
-      - name: Tulis versi ke manifest
+      - name: Tulis versi
         run: |
           set -e
           python3 - "${{ inputs.version_code }}" "${{ inputs.version_name }}" <<'PY'
           import re, sys, pathlib
           vc, vn = sys.argv[1], sys.argv[2]
-          p = pathlib.Path('admin-app/AndroidManifest.xml')
+          p = pathlib.Path('admin-app-kotlin/app/build.gradle.kts')
           s = p.read_text()
-          s = re.sub(r'android:versionCode="[^"]*"', f'android:versionCode="{vc}"', s)
-          s = re.sub(r'android:versionName="[^"]*"', f'android:versionName="{vn}"', s)
+          s = re.sub(r'versionCode = \d+', f'versionCode = {vc}', s)
+          s = re.sub(r'versionName = "[^"]*"', f'versionName = "{vn}"', s)
           p.write_text(s)
-          print('manifest ->', vc, vn)
+          print('versi ->', vc, vn)
           PY
 
-      - name: Rakit APK
+      - name: Build APK
+        working-directory: admin-app-kotlin
         run: |
           set -e
-          SDK="$ANDROID_HOME"
-          BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
-          PLATFORM=$(ls -d "$SDK"/platforms/android-35)
-          echo "BT=$BT"; echo "PLATFORM=$PLATFORM"
-          KERJA="$RUNNER_TEMP/admin"
-          rm -rf "$KERJA"; mkdir -p "$KERJA"/{assets,res,classes,gen,dex}
-          cp admin-app/admin.html "$KERJA/assets/admin.html"
-          cp -r admin-app/res/* "$KERJA/res/"
-          "$BT/aapt2" compile --dir "$KERJA/res" -o "$KERJA/res.zip"
-          "$BT/aapt2" link -o "$KERJA/base.apk" -I "$PLATFORM/android.jar" \
-            --manifest admin-app/AndroidManifest.xml -R "$KERJA/res.zip" \
-            --java "$KERJA/gen" --auto-add-overlay
-          find "$KERJA/gen" -name '*.java' > "$KERJA/sumber.txt"
-          echo admin-app/MainActivity.java >> "$KERJA/sumber.txt"
-          # -bootclasspath tidak diizinkan bersama target 17; cukup -classpath.
-          javac -encoding UTF-8 -source 17 -target 17 -classpath "$PLATFORM/android.jar" \
-            -d "$KERJA/classes" @"$KERJA/sumber.txt"
-          find "$KERJA/classes" -name '*.class' > "$KERJA/kelas.txt"
-          "$BT/d8" --lib "$PLATFORM/android.jar" --min-api 26 --output "$KERJA/dex" @"$KERJA/kelas.txt"
-          cp "$KERJA/base.apk" "$KERJA/unsigned.apk"
-          mkdir -p "$KERJA/zip/assets"
-          cp "$KERJA/assets/admin.html" "$KERJA/zip/assets/"
-          cp "$KERJA/dex/classes.dex" "$KERJA/zip/"
-          (cd "$KERJA/zip" && zip -q -r ../unsigned.apk assets classes.dex)
-          "$BT/zipalign" -f 4 "$KERJA/unsigned.apk" "$KERJA/aligned.apk"
-          keytool -genkeypair -keystore "$KERJA/debug.keystore" -storepass android -keypass android \
-            -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
-            -keyalg RSA -keysize 2048 -validity 10000
-          OUT="Aurevia-Admin-v${{ inputs.version_name }}.apk"
-          "$BT/apksigner" sign --ks "$KERJA/debug.keystore" --ks-pass pass:android \
-            --key-pass pass:android --ks-key-alias androiddebugkey --out "$OUT" "$KERJA/aligned.apk"
-          "$BT/apksigner" verify --print-certs "$OUT" | head -3
-          "$BT/aapt2" dump badging "$OUT" | head -6
-          sha256sum "$OUT" | tee admin-sha256.txt
-          ls -l "$OUT"
+          chmod +x gradlew
+          ./gradlew --console=plain --no-daemon :app:assembleRelease
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          test -n "$APK"
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          ls -l "$APK"
+
+      - name: Verifikasi APK
+        run: |
+          set -e
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | head -4
+          "$BT/aapt2" dump badging "$APK" | head -4
+          sha256sum "$APK" | tee admin-sha256.txt
+          # Panel harus benar-benar ada di dex (bukan shell kosong).
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          dex = b''.join(z.read(n) for n in z.namelist() if n.endswith('.dex'))
+          wajib = [b'Aurevia Admin', b'/v1/admin/effects', b'/v1/admin/overview',
+                   b'Role kustom', b'Hologram', b'aurevia.rixxstore.my.id']
+          hilang = [w.decode() for w in wajib if w not in dex]
+          print("isi panel:", "ok" if not hilang else "HILANG " + str(hilang))
+          sys.exit(1 if hilang else 0)
+          PY
 
       - name: Upload artefak
         uses: actions/upload-artifact@v4
         with:
           name: aurevia-admin-apk
           path: |
-            Aurevia-Admin-v${{ inputs.version_name }}.apk
+            ${{ env.APK }}
             admin-sha256.txt
           if-no-files-found: error
