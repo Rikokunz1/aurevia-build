@@ -58,9 +58,11 @@ jobs:
           grep -q 'EfekPremium' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
           grep -q 'RoleBaku' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
           grep -q '/v1/admin/effects' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
-          # Tidak boleh ada WebView lagi.
-          if grep -q 'WebView' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt; then
-            echo "MASIH ADA WebView"; exit 1
+          # Tidak boleh ada WebView lagi. Yang diperiksa pemakaian API-nya
+          # (import / android.webkit), bukan kata di komentar.
+          if grep -qE '^import android\.webkit|WebView\(|setWebViewClient' \
+             admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt; then
+            echo "MASIH MEMAKAI WebView"; exit 1
           fi
           echo "sumber bersih: Compose, tanpa WebView"
 
