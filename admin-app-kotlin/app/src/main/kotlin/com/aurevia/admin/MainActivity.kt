@@ -1,67 +1,55 @@
-/* Aurevia Admin (Kotlin/Compose) — owner & developer control panel. GPL-3.0. */
+/*
+ * Aurevia Admin — panel Kotlin/Compose asli (tanpa WebView).
+ *
+ * Batch 240. Panel ini menggantikan shell WebView: seluruh layar digambar dengan
+ * Compose, permintaan HTTP memakai HttpURLConnection (tanpa pustaka tambahan),
+ * dan tidak ada satu pun HTML yang dimuat.
+ *
+ * Paket: com.aurevia.admin — SAMA dengan APK admin versi sebelumnya supaya
+ * pembaruan bisa menimpa (kalau sertifikatnya sama). Sertifikat berbeda berarti
+ * versi lama perlu dicopot sekali.
+ */
 package com.aurevia.admin
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,1136 +59,836 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.net.HttpURLConnection
+import java.net.URL
 
-private val AdminRed = Color(0xFFF2545B)
-private val AdminBg = Color(0xFF0B0B0F)
-private val AdminCardBg = Color(0xFF15161C)
-private val AdminStroke = Color(0xFF262832)
-private val AdminInk = Color(0xFFF3F0F5)
-private val AdminMuted = Color(0xFF9A94A3)
+/** Warna merek Aurevia; dipakai di seluruh panel. */
+private val AureviaRed = Color(0xFFFA2D48)
+private val Latar = Color(0xFF0B0B10)
+private val Kartu = Color(0xFF15151D)
+private val KartuTinggi = Color(0xFF1E1E28)
+private val TeksUtama = Color(0xFFF5F5FA)
+private val TeksRedup = Color(0xFF9E9EAE)
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        enableEdgeToEdge()
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    primary = AdminRed,
+                    primary = AureviaRed,
+                    background = Latar,
+                    surface = Kartu,
                     onPrimary = Color.White,
-                    background = AdminBg,
-                    onBackground = AdminInk,
-                    surface = AdminCardBg,
-                    onSurface = AdminInk,
-                    surfaceVariant = Color(0xFF1D1F27),
-                    onSurfaceVariant = AdminMuted,
-                    outline = AdminStroke,
+                    onBackground = TeksUtama,
+                    onSurface = TeksUtama,
                 ),
             ) {
-                Surface(Modifier.fillMaxSize(), color = AdminBg) { AdminApp() }
+                PanelAdmin()
             }
         }
     }
 }
 
-@Composable
-private fun AdminApp() {
-    val ctx = LocalContext.current
-    var stage by remember { mutableStateOf("boot") }
-    LaunchedEffect(Unit) {
-        AdminSession.load(ctx)
-        stage = when {
-            AdminSession.token.isBlank() -> "login"
-            !AdminSession.isStaff -> "denied"
-            else -> "home"
-        }
-    }
-    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-        when (stage) {
-            "boot" -> LoadingPane("Memeriksa sesi…")
-            "login" -> LoginScreen(onLogged = { stage = if (AdminSession.isStaff) "home" else "denied" })
-            "denied" -> DeniedScreen(onBack = {
-                AdminSession.clear(ctx)
-                stage = "login"
-            })
-            else -> AdminShell(onLogout = {
-                AdminSession.clear(ctx)
-                stage = "login"
-            })
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ login */
-
-@Composable
-private fun LoginScreen(onLogged: () -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-
-    fun submit() {
-        if (busy) return
-        if (username.isBlank() || password.isBlank()) {
-            error = "Isi username dan kata sandi."
-            return
-        }
-        busy = true
-        error = ""
-        scope.launch {
-            try {
-                val result = AdminApi.login(username.trim(), password)
-                AdminSession.save(ctx, result.s("token"), result.optJSONObject("user") ?: JSONObject())
-                password = ""
-                if (!AdminSession.isStaff) error = "Akun ini bukan owner/developer/admin." else onLogged()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal masuk."
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()
-            .padding(horizontal = 26.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Spacer(Modifier.height(24.dp))
-        Box(
-            Modifier.size(72.dp).clip(RoundedCornerShape(22.dp))
-                .background(Brush.linearGradient(listOf(AdminRed, Color(0xFF7B1E2B)))),
-            contentAlignment = Alignment.Center,
-        ) { Text("A", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White) }
-        Text("AUREVIA ADMIN", letterSpacing = 4.sp, fontSize = 11.sp, color = AdminRed, fontWeight = FontWeight.Bold)
-        Text("Panel pemilik", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = AdminInk)
-        Text(
-            "Masuk dengan akun owner atau developer. Panel ini hanya mengelola akun, centang, dan pengumuman.",
-            color = AdminMuted, fontSize = 13.sp,
-        )
-        OutlinedTextField(
-            username, { username = it.take(24).trim() }, Modifier.fillMaxWidth(),
-            label = { Text("Username") }, singleLine = true, enabled = !busy,
-            shape = RoundedCornerShape(16.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next),
-        )
-        OutlinedTextField(
-            password, { password = it }, Modifier.fillMaxWidth(),
-            label = { Text("Kata sandi") }, singleLine = true, enabled = !busy,
-            shape = RoundedCornerShape(16.dp),
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-        )
-        if (error.isNotBlank()) Text(error, color = AdminRed, fontSize = 13.sp)
-        Button(
-            onClick = { submit() }, enabled = !busy,
-            modifier = Modifier.fillMaxWidth().height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AdminRed, contentColor = Color.White),
-        ) {
-            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-            else Text("Masuk", fontWeight = FontWeight.Bold)
-        }
-        Text(AdminApi_base_hint(), color = AdminMuted, fontSize = 11.sp)
-    }
-}
-
-private fun AdminApi_base_hint(): String = "Server: $BASE_URL"
-
-@Composable
-private fun DeniedScreen(onBack: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(60.dp))
-        Text("Akses ditolak", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AdminInk)
-        Text(
-            "Akun @${AdminSession.username} tidak punya role owner/developer. Minta pemilik memberi role lewat menu Pengguna.",
-            color = AdminMuted, fontSize = 13.sp,
-        )
-        Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = AdminRed, contentColor = Color.White)) {
-            Text("Keluar")
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ shell */
-
-private data class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
-
-@Composable
-private fun AdminShell(onLogout: () -> Unit) {
-    var tab by remember { mutableIntStateOf(0) }
-    val tabs = listOf(
-        Tab("Ringkasan", Icons.Filled.Home),
-        Tab("Pengguna", Icons.Filled.Person),
-        Tab("Siarkan", Icons.Filled.Send),
-        Tab("Moderasi", Icons.Filled.Warning),
-        Tab("Info", Icons.Filled.Info),
-    )
-    Scaffold(
-        containerColor = AdminBg,
-        bottomBar = {
-            NavigationBar(containerColor = Color(0xFF101117), tonalElevation = 0.dp) {
-                tabs.forEachIndexed { index, item ->
-                    NavigationBarItem(
-                        selected = tab == index,
-                        onClick = { tab = index },
-                        icon = { Icon(item.icon, item.label) },
-                        label = { Text(item.label, fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = AdminRed,
-                            selectedTextColor = AdminRed,
-                            indicatorColor = AdminRed.copy(alpha = 0.12f),
-                            unselectedIconColor = AdminMuted,
-                            unselectedTextColor = AdminMuted,
-                        ),
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            when (tab) {
-                0 -> OverviewScreen()
-                1 -> UsersScreen()
-                2 -> BroadcastScreen()
-                3 -> ModerationScreen()
-                else -> InfoScreen(onLogout = onLogout)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScreenHeader(title: String, subtitle: String, onRefresh: (() -> Unit)? = null) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AdminInk)
-            Text(subtitle, fontSize = 12.sp, color = AdminMuted)
-        }
-        if (onRefresh != null) IconButton(onClick = onRefresh) {
-            Icon(Icons.Filled.Refresh, "Muat ulang", tint = AdminMuted)
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ overview */
-
-@Composable
-private fun OverviewScreen() {
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
-    var data by remember { mutableStateOf(JSONObject()) }
-    var tick by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(tick) {
-        loading = true
-        error = ""
-        try {
-            data = AdminApi.overview()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: "Gagal memuat ringkasan."
-        } finally {
-            loading = false
-        }
-    }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Ringkasan", "Server Aurevia • @${AdminSession.username}", onRefresh = { tick++ })
-        if (loading) {
-            LoadingPane("Mengambil ringkasan…")
-        } else {
-            if (error.isNotBlank()) ErrorBanner(error)
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile("Pengguna", data.optInt("users").toString(), Modifier.weight(1f))
-                    StatTile("Staf", data.optInt("staff").toString(), Modifier.weight(1f))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile("Bersentang", data.optInt("checked").toString(), Modifier.weight(1f))
-                    StatTile("Perangkat", data.optInt("devicesActive").toString() + "/" + data.optInt("devices"), Modifier.weight(1f))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile("Room Live", data.optInt("rooms").toString(), Modifier.weight(1f))
-                    StatTile("Pendengar", data.optInt("listeners").toString(), Modifier.weight(1f))
-                }
-                InfoCard(
-                    "Push (FCM)",
-                    if (data.s("push") == "configured") "Aktif — notifikasi HP siap dikirim."
-                    else "Belum siap (${data.s("push").ifBlank { "unknown" }}). Cek kredensial server.",
-                )
-                InfoCard(
-                    "Notifikasi Beranda",
-                    "Setiap pengumuman dari tab Siarkan masuk ke lonceng Beranda semua pengguna, bukan cuma tray HP.",
-                )
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(20.dp)).background(AdminCardBg)
-            .border(1.dp, AdminStroke, RoundedCornerShape(20.dp)).padding(16.dp),
-    ) {
-        Text(value, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AdminInk)
-        Text(label, fontSize = 12.sp, color = AdminMuted)
-    }
-}
-
-@Composable
-private fun InfoCard(title: String, body: String) {
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(AdminCardBg)
-            .border(1.dp, AdminStroke, RoundedCornerShape(20.dp)).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AdminInk)
-        Text(body, fontSize = 12.sp, color = AdminMuted)
-    }
-}
-
-/* ------------------------------------------------------------------ users */
-
-@Composable
-private fun UsersScreen() {
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var users by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf<JSONObject?>(null) }
-    var tick by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(query, tick) {
-        loading = true
-        error = ""
-        if (query.isNotBlank()) delay(350)
-        try {
-            users = AdminApi.users(query.trim())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: "Gagal memuat pengguna."
-        } finally {
-            loading = false
-        }
-    }
-
-    Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Pengguna", "Beri centang, warna badge, dan role.", onRefresh = { tick++ })
-        OutlinedTextField(
-            query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            placeholder = { Text("Cari username…") },
-            leadingIcon = { Icon(Icons.Filled.Search, null, tint = AdminMuted) },
-            singleLine = true, shape = RoundedCornerShape(16.dp),
-        )
-        if (status.isNotBlank()) Text(
-            status, color = AdminRed, fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
-        )
-        if (error.isNotBlank()) ErrorBanner(error)
-        if (loading) LoadingPane("Memuat akun…")
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(users) { user ->
-                UserRow(user) { selected = user }
-            }
-        }
-    }
-
-    val target = selected
-    if (target != null) {
-        UserDialog(
-            user = target,
-            onDismiss = { selected = null },
-            onSaved = { message ->
-                status = message
-                selected = null
-                scope.launch { tick++ }
-            },
-            onError = { message -> status = message },
-        )
-    }
-}
-
-@Composable
-private fun UserRow(user: JSONObject, onClick: () -> Unit) {
-    val initial = user.s("username").take(1).uppercase().ifBlank { "?" }
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF23252E)),
-            contentAlignment = Alignment.Center,
-        ) { Text(initial, color = AdminInk, fontWeight = FontWeight.Bold) }
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    user.s("username"), color = AdminInk, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                if (user.optBoolean("verified")) {
-                    val badge = user.s("badge")
-                    Box(
-                        Modifier.size(14.dp).clip(CircleShape)
-                            .background(if (badge.isBlank()) AdminRed else Color(badgeColor(badge))),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(9.dp)) }
-                }
-                if (user.s("role") != "user") Pill(user.s("role"))
-            }
-            Text(user.s("name"), color = AdminMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (user.optBoolean("verified") && user.s("badge").isNotBlank()) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(Color(badgeColor(user.s("badge")))))
-        }
-    }
-}
-
-@Composable
-private fun Pill(text: String) {
-    Box(
-        Modifier.clip(RoundedCornerShape(50)).background(AdminRed.copy(alpha = 0.16f))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    ) { Text(text, color = AdminRed, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-}
-
-@Composable
-private fun UserDialog(
-    user: JSONObject,
-    onDismiss: () -> Unit,
-    onSaved: (String) -> Unit,
-    onError: (String) -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var role by remember { mutableStateOf(user.s("role").ifBlank { "user" }) }
-    var verified by remember { mutableStateOf(user.optBoolean("verified")) }
-    var badge by remember { mutableStateOf(user.s("badge")) }
-    var busy by remember { mutableStateOf(false) }
-    var localError by remember { mutableStateOf("") }
-    var confirmRole by remember { mutableStateOf(false) }
-    // Batch 210: mute & ban langsung dari detail akun.
-    var muted by remember { mutableStateOf(user.optBoolean("muted")) }
-    var banned by remember { mutableStateOf(user.optBoolean("banned")) }
-    var confirmBan by remember { mutableStateOf(false) }
-    var banReason by remember { mutableStateOf(user.s("banReason")) }
-    var blockIp by remember { mutableStateOf(true) }
-    // Changing your own role from the panel is exactly how a developer locked themselves out;
-    // the server refuses it now, and the UI must not even offer the option.
-    val isSelf = user.s("username").equals(AdminSession.username, ignoreCase = true)
-    // Developer is the highest role: an owner may not touch a developer account, and only a
-    // developer may hand out the developer role. Mirrors the server policy exactly.
-    val iAmDeveloper = AdminSession.role == "developer"
-    val targetIsDeveloper = user.s("role") == "developer"
-    val roleEditable = AdminSession.isOwnerLevel && !isSelf && (iAmDeveloper || !targetIsDeveloper)
-    // Developer dilindungi: owner tidak boleh menindak akun developer, dan akun sendiri tidak
-    // bisa dimoderasi (biar tidak terkunci sendiri). Aturan sama dengan server.
-    val canModerate = AdminSession.isOwnerLevel && !isSelf && (iAmDeveloper || !targetIsDeveloper)
-
-    fun save() {
-        if (busy) return
-        busy = true
-        localError = ""
-        scope.launch {
-            try {
-                val colour = if (verified) badge else ""
-                AdminApi.setRole(
-                    username = user.s("username"),
-                    role = if (AdminSession.isOwnerLevel) role else null,
-                    verified = verified,
-                    badge = colour,
-                )
-                onSaved("Tersimpan untuk @${user.s("username")}")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                localError = e.message ?: "Gagal menyimpan."
-                onError(localError)
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun toggleMute() {
-        if (busy) return
-        busy = true
-        localError = ""
-        scope.launch {
-            try {
-                val r = AdminApi.mute(user.s("username"), !muted)
-                muted = r.optBoolean("muted", !muted)
-                onSaved(if (muted) "@${user.s("username")} dibisukan (tidak bisa Live/room)" else "@${user.s("username")} bisa Live lagi")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                localError = e.message ?: "Gagal mengubah mute."
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun applyBan(bannedNow: Boolean) {
-        if (busy) return
-        busy = true
-        localError = ""
-        scope.launch {
-            try {
-                val r = AdminApi.ban(user.s("username"), bannedNow, banReason.trim(), blockIp)
-                banned = r.optBoolean("banned", bannedNow)
-                val ip = r.s("blockedIp")
-                onSaved(
-                    when {
-                        !banned -> "@${user.s("username")} dibuka blokirnya"
-                        ip.isNotBlank() -> "@${user.s("username")} diblokir permanen + IP $ip diblokir"
-                        else -> "@${user.s("username")} diblokir permanen"
-                    },
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                localError = e.message ?: "Gagal menerapkan blokir."
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        containerColor = AdminCardBg,
-        titleContentColor = AdminInk,
-        textContentColor = AdminMuted,
-        title = { Text("@${user.s("username")}", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(
-                Modifier.height(420.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text("Beri centang", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = verified, onCheckedChange = { checked ->
-                        verified = checked
-                        if (checked && badge.isBlank()) badge = "blue"
-                    })
-                    Spacer(Modifier.width(10.dp))
-                    Text(if (verified) "Akun bersentang" else "Tanpa centang", fontSize = 12.sp, color = AdminMuted)
-                }
-                Text("Warna badge", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                BADGE_COLORS.chunked(5).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { colour ->
-                            val active = verified && badge == colour
-                            Box(
-                                Modifier.size(34.dp).clip(CircleShape).background(Color(badgeColor(colour)))
-                                    .border(if (active) 3.dp else 1.dp, if (active) AdminInk else AdminStroke, CircleShape)
-                                    .clickable { verified = true; badge = colour },
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                Text("Role", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                if (!AdminSession.isOwnerLevel) {
-                    Text("Hanya owner yang bisa mengubah role.", fontSize = 11.sp, color = AdminMuted)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("user", "owner", "developer").forEach { option ->
-                        FilterChip(
-                            selected = role == option,
-                            enabled = roleEditable && !busy && (option != "developer" || iAmDeveloper),
-                            onClick = { if (option != role) { role = option; confirmRole = true } },
-                            label = { Text(option, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AdminRed.copy(alpha = 0.18f),
-                                selectedLabelColor = AdminRed,
-                                labelColor = AdminMuted,
-                            ),
-                        )
-                    }
-                }
-                if (isSelf) Text(
-                    "Ini akun kamu sendiri — role tidak bisa diubah dari panel supaya tidak terkunci lagi.",
-                    color = AdminMuted, fontSize = 11.sp,
-                )
-                if (!isSelf && targetIsDeveloper && !iAmDeveloper) Text(
-                    "Akun developer dilindungi: hanya developer lain yang bisa mengubah rolenya.",
-                    color = AdminMuted, fontSize = 11.sp,
-                )
-                if (!isSelf && AdminSession.isOwnerLevel && !iAmDeveloper) Text(
-                    "Hanya developer yang bisa mengangkat akun menjadi developer.",
-                    color = AdminMuted, fontSize = 11.sp,
-                )
-                HorizontalDivider(color = AdminStroke, modifier = Modifier.padding(vertical = 6.dp))
-                Text("Moderasi", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                if (!canModerate) {
-                    Text(
-                        when {
-                            isSelf -> "Akun kamu sendiri tidak bisa dimoderasi dari panel."
-                            targetIsDeveloper && !iAmDeveloper -> "Akun developer dilindungi."
-                            AdminSession.role == "admin" -> "Butuh role owner/developer untuk mute & blokir."
-                            else -> "Tidak tersedia untuk akun ini."
-                        },
-                        fontSize = 11.sp, color = AdminMuted,
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = muted,
-                        enabled = canModerate && !busy,
-                        onCheckedChange = { toggleMute() },
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Bisukan akun", fontSize = 12.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Tetap bisa masuk, tapi tidak bisa membuat Live/room.",
-                            fontSize = 10.5.sp, color = AdminMuted,
-                        )
-                    }
-                }
-                if (banned) {
-                    Text(
-                        "Akun ini DIBLOKIR PERMANEN" + (user.s("banReason").ifBlank { "" }.let { if (it.isBlank()) "" else " · alasan: $it" }),
-                        fontSize = 11.sp, color = AdminRed, fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Button(
-                    onClick = { if (banned) applyBan(false) else confirmBan = true },
-                    enabled = canModerate && !busy,
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (banned) AdminStroke else AdminRed.copy(alpha = 0.16f),
-                        contentColor = if (banned) AdminInk else AdminRed,
-                    ),
-                ) {
-                    Text(if (banned) "Lepas blokir permanen" else "Blokir permanen + IP", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
-                }
-                if (localError.isNotBlank()) Text(localError, color = AdminRed, fontSize = 12.sp)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { save() }, enabled = !busy) {
-                if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AdminRed)
-                else Text("Simpan", color = AdminRed, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Tutup", color = AdminMuted) } },
-    )
-
-    if (confirmBan) {
-        AlertDialog(
-            onDismissRequest = { if (!busy) confirmBan = false },
-            containerColor = AdminCardBg,
-            titleContentColor = AdminInk,
-            textContentColor = AdminMuted,
-            title = { Text("Blokir @${user.s("username")} permanen?", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "Semua sesi akun ini langsung diputus dan akun tidak bisa masuk lagi sampai diblokir dibuka.",
-                        fontSize = 12.5.sp,
-                    )
-                    OutlinedTextField(
-                        banReason, { banReason = it.take(160) }, Modifier.fillMaxWidth(),
-                        label = { Text("Alasan (opsional)") }, singleLine = true,
-                        shape = RoundedCornerShape(14.dp), enabled = !busy,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = blockIp, onCheckedChange = { blockIp = it }, enabled = !busy)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Blokir IP terakhir", fontSize = 12.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "Mencegah akun baru dibuat dari jaringan yang sama. Hati-hati kalau akun memakai WiFi publik.",
-                                fontSize = 10.5.sp, color = AdminMuted,
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { confirmBan = false; applyBan(true) }, enabled = !busy) {
-                    Text("Blokir sekarang", color = AdminRed, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmBan = false }, enabled = !busy) { Text("Batal", color = AdminMuted) }
-            },
-        )
-    }
-
-    if (confirmRole) {
-        val current = user.s("role").ifBlank { "user" }
-        AlertDialog(
-            onDismissRequest = { confirmRole = false; role = current },
-            containerColor = AdminCardBg,
-            titleContentColor = AdminInk,
-            textContentColor = AdminMuted,
-            title = { Text("Ubah role akun?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "@${user.s("username")} akan menjadi \"$role\" (sekarang \"$current\"). " +
-                        "Akun dengan role \"user\" tidak bisa membuka panel ini.",
-                    fontSize = 13.sp,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { confirmRole = false; save() }) {
-                    Text("Ya, ubah", color = AdminRed, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRole = false; role = current }) { Text("Batal", color = AdminMuted) }
-            },
-        )
-    }
-}
-
-/* ------------------------------------------------------------------ broadcast */
-
-@Composable
-private fun BroadcastScreen() {
-    val scope = rememberCoroutineScope()
-    var title by remember { mutableStateOf("Aurevia") }
-    var message by remember { mutableStateOf("") }
-    var audience by remember { mutableStateOf("all") }
-    var username by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf("") }
-
-    fun send() {
-        if (busy) return
-        if (message.isBlank()) {
-            error = "Isi pesan dulu."
-            return
-        }
-        if (audience == "user" && username.isBlank()) {
-            error = "Tulis username tujuan."
-            return
-        }
-        busy = true
-        error = ""
-        result = ""
-        scope.launch {
-            try {
-                val response = AdminApi.notify(
-                    title = title.ifBlank { "Aurevia" },
-                    message = message.trim(),
-                    audience = audience,
-                    username = username.trim().ifBlank { null },
-                )
-                val delivered = response.optInt("delivered")
-                val feed = response.optInt("feed")
-                val targets = response.optInt("targets")
-                result = "Terkirim ke $targets akun • $delivered notifikasi HP • $feed entri Beranda"
-                message = ""
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal mengirim."
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()) {
-        ScreenHeader("Siarkan", "Muncul di notifikasi HP dan lonceng Beranda.")
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                title, { title = it.take(80) }, Modifier.fillMaxWidth(),
-                label = { Text("Judul") }, singleLine = true, shape = RoundedCornerShape(16.dp),
-                enabled = !busy,
-            )
-            OutlinedTextField(
-                message, { message = it.take(300) }, Modifier.fillMaxWidth().height(150.dp),
-                label = { Text("Pesan") }, shape = RoundedCornerShape(16.dp), enabled = !busy,
-            )
-            Text("Penerima", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("all" to "Semua", "verified" to "Bersentang", "staff" to "Staf", "user" to "Satu akun").forEach { (key, label) ->
-                    FilterChip(
-                        selected = audience == key,
-                        onClick = { audience = key },
-                        enabled = !busy,
-                        label = { Text(label, fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = AdminRed.copy(alpha = 0.18f),
-                            selectedLabelColor = AdminRed,
-                            labelColor = AdminMuted,
-                        ),
-                    )
-                }
-            }
-            if (audience == "user") {
-                OutlinedTextField(
-                    username, { username = it.trim() }, Modifier.fillMaxWidth(),
-                    label = { Text("Username tujuan") }, singleLine = true,
-                    shape = RoundedCornerShape(16.dp), enabled = !busy,
-                )
-            }
-            if (error.isNotBlank()) ErrorBanner(error)
-            if (result.isNotBlank()) InfoCard("Terkirim", result)
-            Button(
-                onClick = { send() }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AdminRed, contentColor = Color.White),
-            ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-                else Text("Kirim pengumuman", fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(20.dp))
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ moderasi */
+// ---------------------------------------------------------------- API
 
 /**
- * Moderasi (batch 210): pesan singkat yang muncul SAAT APLIKASI DIBUKA — sengaja dipisah dari
- * "Siarkan" supaya tidak tertukar dengan notifikasi dan dengan toast donasi login/daftar —
- * plus daftar akun yang diblokir permanen, IP yang diblokir, dan akun yang dibisukan.
+ * Klien API admin. Sengaja memakai HttpURLConnection: satu berkas, tanpa dependensi,
+ * jadi panel tidak bisa gagal jalan gara-gara pustaka tambahan.
  */
-@Composable
-private fun ModerationScreen() {
-    val scope = rememberCoroutineScope()
-    var text by remember { mutableStateOf("") }
-    var enabled by remember { mutableStateOf(false) }
-    var savedVersion by remember { mutableStateOf(0L) }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("") }
+internal object AdminApi {
+    /** Disamakan dengan aplikasi utama (AureviaApi.AUREVIA_BASE). */
+    const val BASE = "https://aurevia.rixxstore.my.id"
 
-    var bannedUsers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var bannedIps by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var mutedUsers by remember { mutableStateOf<List<String>>(emptyList()) }
-    var reloadTick by remember { mutableIntStateOf(0) }
+    class Galat(val status: Int, pesan: String) : Exception(pesan.ifBlank { "galat $status" })
 
-    LaunchedEffect(reloadTick) {
+    var token: String? = null
+        private set
+
+    fun masuk(t: String?) { token = t }
+
+    fun get(jalur: String): JSONObject = panggil("GET", jalur, null)
+    fun post(jalur: String, badan: JSONObject?): JSONObject = panggil("POST", jalur, badan)
+
+    private fun panggil(metode: String, jalur: String, badan: JSONObject?): JSONObject {
+        val url = URL(BASE + jalur)
+        val koneksi = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = metode
+            connectTimeout = 20000
+            readTimeout = 25000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "AureviaAdmin/2.2")
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
+            if (badan != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            }
+        }
         try {
-            val data = AdminApi.bannedList()
-            bannedUsers = data.optJSONArray("users")?.list().orEmpty()
-            bannedIps = data.optJSONArray("ips")?.list().orEmpty()
-            mutedUsers = data.optJSONArray("muted")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }.orEmpty()
-            error = ""
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: "Gagal memuat daftar moderasi."
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        // Isi dulu dengan teks toast yang sedang aktif di server.
-        runCatching { AdminApi.appToast() }.getOrNull()?.let {
-            text = it.s("text")
-            enabled = it.optBoolean("enabled")
-            savedVersion = it.optLong("version")
-        }
-    }
-
-    fun saveToast() {
-        if (busy) return
-        busy = true
-        error = ""
-        result = ""
-        scope.launch {
-            try {
-                val r = AdminApi.setAppToast(text.trim(), enabled && text.isNotBlank())
-                savedVersion = r.optLong("version")
-                enabled = r.optBoolean("enabled")
-                result = if (enabled) "Toast aktif — akan muncul sekali per perangkat saat aplikasi dibuka."
-                else "Toast dimatikan."
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal menyimpan toast."
-            } finally {
-                busy = false
+            if (badan != null) {
+                koneksi.outputStream.use { it.write(badan.toString().toByteArray(Charsets.UTF_8)) }
             }
-        }
-    }
-
-    fun unban(username: String) {
-        scope.launch {
-            try {
-                AdminApi.ban(username, false)
-                result = "@$username dibuka blokirnya."
-                reloadTick++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal membuka blokir."
+            val kode = koneksi.responseCode
+            val aliran = if (kode in 200..299) koneksi.inputStream else koneksi.errorStream
+            val teks = aliran?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+            val json = runCatching { JSONObject(teks) }.getOrNull()
+            if (kode !in 200..299) {
+                val pesan = json?.optString("error").orEmpty().ifBlank { "HTTP $kode" }
+                throw Galat(kode, pesan)
             }
-        }
-    }
-
-    fun unbanIp(ip: String) {
-        scope.launch {
-            try {
-                AdminApi.banIp(ip, false)
-                result = "Blokir IP $ip dilepas."
-                reloadTick++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal melepas blokir IP."
-            }
-        }
-    }
-
-    fun unmute(username: String) {
-        scope.launch {
-            try {
-                AdminApi.mute(username, false)
-                result = "@$username bisa Live lagi."
-                reloadTick++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: "Gagal mengubah mute."
-            }
-        }
-    }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()) {
-        ScreenHeader("Moderasi", "Toast saat buka aplikasi, blokir permanen, dan mute.", onRefresh = { reloadTick++ })
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-
-            Text("Toast saat aplikasi dibuka", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold)
-            Text(
-                "Muncul sekali di bawah layar setiap kali pengguna membuka aplikasi (teks baru = tampil lagi). " +
-                    "Ini bukan notifikasi HP dan bukan toast donasi setelah login.",
-                fontSize = 11.sp, color = AdminMuted,
-            )
-            OutlinedTextField(
-                text, { text = it.take(300) }, Modifier.fillMaxWidth().height(110.dp),
-                label = { Text("Teks toast") },
-                shape = RoundedCornerShape(16.dp), enabled = !busy && AdminSession.isOwnerLevel,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = { enabled = it },
-                    enabled = !busy && AdminSession.isOwnerLevel,
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(if (enabled) "Aktif" else "Mati", fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                    if (savedVersion > 0) {
-                        Text("Versi terakhir: $savedVersion", fontSize = 10.5.sp, color = AdminMuted)
-                    }
-                }
-            }
-            Button(
-                onClick = { saveToast() },
-                enabled = !busy && AdminSession.isOwnerLevel,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AdminRed, contentColor = Color.White),
-            ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-                else Text("Simpan toast", fontWeight = FontWeight.Bold)
-            }
-            if (error.isNotBlank()) ErrorBanner(error)
-            if (result.isNotBlank()) InfoCard("Berhasil", result)
-
-            HorizontalDivider(color = AdminStroke, modifier = Modifier.padding(vertical = 6.dp))
-
-            Text("Diblokir permanen (${bannedUsers.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold)
-            if (bannedUsers.isEmpty()) {
-                Text("Belum ada akun yang diblokir.", fontSize = 11.5.sp, color = AdminMuted)
-            } else {
-                bannedUsers.forEach { u ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("@${u.s("username")}", fontSize = 13.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                listOfNotNull(
-                                    u.s("reason").ifBlank { null }?.let { "alasan: $it" },
-                                    u.s("lastIp").ifBlank { null }?.let { "IP: $it" },
-                                ).joinToString(" · ").ifBlank { "tanpa keterangan" },
-                                fontSize = 10.5.sp, color = AdminMuted,
-                            )
-                        }
-                        TextButton(onClick = { unban(u.s("username")) }, enabled = AdminSession.isOwnerLevel) {
-                            Text("Buka blokir", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-
-            Text("IP diblokir (${bannedIps.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-            if (bannedIps.isEmpty()) {
-                Text("Belum ada IP yang diblokir.", fontSize = 11.5.sp, color = AdminMuted)
-            } else {
-                bannedIps.forEach { ip ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(ip.s("ip"), fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                            Text("@${ip.s("username")} · oleh ${ip.s("by")}", fontSize = 10.5.sp, color = AdminMuted)
-                        }
-                        TextButton(onClick = { unbanIp(ip.s("ip")) }, enabled = AdminSession.isOwnerLevel) {
-                            Text("Lepas", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-
-            Text("Dibisukan (${mutedUsers.size})", fontSize = 14.sp, color = AdminInk, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-            if (mutedUsers.isEmpty()) {
-                Text("Tidak ada akun yang dibisukan.", fontSize = 11.5.sp, color = AdminMuted)
-            } else {
-                mutedUsers.forEach { username ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AdminCardBg)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("@$username", Modifier.weight(1f), fontSize = 12.5.sp, color = AdminInk, fontWeight = FontWeight.SemiBold)
-                        TextButton(onClick = { unmute(username) }, enabled = AdminSession.isOwnerLevel) {
-                            Text("Bunyikan", color = AdminRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-            Spacer(Modifier.height(24.dp))
+            return json ?: JSONObject()
+        } finally {
+            koneksi.disconnect()
         }
     }
 }
 
-/* ------------------------------------------------------------------ info */
+// ---------------------------------------------------------------- state
 
-@Composable
-private fun InfoScreen(onLogout: () -> Unit) {
-    var rooms by remember { mutableStateOf(0) }
-    var error by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        try {
-            rooms = AdminApi.rooms().size
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e.message ?: ""
-        }
-    }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Info", "Akun & server yang dipakai.")
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            InfoCard(
-                "Masuk sebagai",
-                "@${AdminSession.username} • ${AdminSession.name}\nRole: ${AdminSession.role}",
-            )
-            InfoCard("Server", BASE_URL)
-            InfoCard("Room Live", rooms.toString())
-            InfoCard(
-                "Aplikasi",
-                "Aurevia Admin 2.0.2 (Kotlin/Compose)\nPanel ini terpisah dari aplikasi musik.",
-            )
-            if (error.isNotBlank()) Text(error, color = AdminMuted, fontSize = 11.sp)
-            Button(
-                onClick = onLogout,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF23252E), contentColor = AdminInk),
-            ) {
-                Icon(Icons.Filled.ExitToApp, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Keluar")
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
+private enum class Tab(val judul: String) {
+    BERANDA("Beranda"),
+    PENGGUNA("Pengguna"),
+    EFEK("Efek"),
+    ROOM("Room"),
+    SIARAN("Siaran"),
 }
 
-/* ------------------------------------------------------------------ bits */
-
-@Composable
-private fun LoadingPane(text: String) {
-    Column(
-        Modifier.fillMaxWidth().padding(vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.5.dp, color = AdminRed)
-        Text(text, color = AdminMuted, fontSize = 12.sp)
-    }
-}
-
-@Composable
-private fun ErrorBanner(message: String) {
-    Box(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(14.dp)).background(AdminRed.copy(alpha = 0.12f))
-            .padding(12.dp),
-    ) { Text(message, color = AdminRed, fontSize = 12.sp) }
-}
-
-/** Badge palette accepted by POST /v1/admin/role (same colours as the music app). */
-private val BADGE_COLORS = listOf(
-    "blue", "green", "pink", "purple", "gold", "yellow", "amber", "red", "white", "silver",
+private data class Pengguna(
+    val id: String,
+    val username: String,
+    val nama: String,
+    val role: String,
+    val efek: String,
+    val terverifikasi: Boolean,
+    val badge: String,
 )
 
-private fun badgeColor(name: String): Long = when (name) {
-    "blue" -> 0xFF3B82F6
-    "green" -> 0xFF22C55E
-    "pink" -> 0xFFEC4899
-    "purple" -> 0xFF8B5CF6
-    "gold" -> 0xFFEAB308
-    "yellow" -> 0xFFFACC15
-    "amber" -> 0xFFF59E0B
-    "red" -> 0xFFEF4444
-    "white" -> 0xFFE5E7EB
-    "silver" -> 0xFFCBD5E1
-    else -> 0xFF64748B
+private fun JSONObject.kePengguna() = Pengguna(
+    id = optString("id"),
+    username = optString("username"),
+    nama = optString("name").ifBlank { optString("username") },
+    role = optString("role").ifBlank { "user" },
+    efek = optString("efek"),
+    terverifikasi = optBoolean("verified"),
+    badge = optString("badge"),
+)
+
+// ---------------------------------------------------------------- panel
+
+@Composable
+private fun PanelAdmin() {
+    var token by remember { mutableStateOf<String?>(null) }
+    var pesan by remember { mutableStateOf<String?>(null) }
+
+    Surface(Modifier.fillMaxSize(), color = Latar) {
+        Column(Modifier.fillMaxSize()) {
+            pesan?.let { teks ->
+                Surface(color = AureviaRed.copy(alpha = 0.15f)) {
+                    Text(
+                        teks,
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        color = AureviaRed,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+            if (token == null) {
+                LayarMasuk(
+                    onMasuk = { t ->
+                        AdminApi.masuk(t)
+                        token = t
+                    },
+                    onGalat = { pesan = it },
+                )
+            } else {
+                IsiPanel(
+                    onKeluar = {
+                        AdminApi.masuk(null)
+                        token = null
+                    },
+                    onGalat = { pesan = it },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LayarMasuk(onMasuk: (String) -> Unit, onGalat: (String) -> Unit) {
+    var user by remember { mutableStateOf("") }
+    var sandi by remember { mutableStateOf("") }
+    var sibuk by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(
+        Modifier.fillMaxSize().padding(28.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Aurevia Admin", color = TeksUtama, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+        Spacer(Modifier.height(6.dp))
+        Text("Panel owner & developer", color = TeksRedup, fontSize = 13.sp)
+        Spacer(Modifier.height(28.dp))
+        OutlinedTextField(
+            value = user,
+            onValueChange = { user = it.trim() },
+            label = { Text("Username") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            colors = TextFieldDefaults.colors(focusedContainerColor = Kartu, unfocusedContainerColor = Kartu),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = sandi,
+            onValueChange = { sandi = it },
+            label = { Text("Kata sandi") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            colors = TextFieldDefaults.colors(focusedContainerColor = Kartu, unfocusedContainerColor = Kartu),
+        )
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = {
+                if (user.isBlank() || sandi.isBlank()) {
+                    onGalat("Username dan kata sandi wajib diisi.")
+                    return@Button
+                }
+                sibuk = true
+                scope.launch {
+                    try {
+                        val badan = JSONObject().put("username", user).put("password", sandi)
+                        val hasil = withContext(Dispatchers.IO) { AdminApi.post("/v1/auth/login", badan) }
+                        val t = hasil.optString("token")
+                        if (t.isBlank()) onGalat("Server tidak mengirim sesi.") else onMasuk(t)
+                    } catch (e: Exception) {
+                        onGalat(e.message ?: "Gagal masuk")
+                    } finally {
+                        sibuk = false
+                    }
+                }
+            },
+            enabled = !sibuk,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            shape = RoundedCornerShape(26.dp),
+        ) {
+            if (sibuk) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+            else Text("Masuk", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun IsiPanel(onKeluar: () -> Unit, onGalat: (String) -> Unit) {
+    var tab by remember { mutableStateOf(Tab.BERANDA) }
+
+    Column(Modifier.fillMaxSize()) {
+        // ---------------- kepala
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(38.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(AureviaRed, Color(0xFF8B5CF6)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("A", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Aurevia Admin", color = TeksUtama, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("Panel owner & developer", color = TeksRedup, fontSize = 11.sp)
+            }
+            TextButton(onClick = onKeluar) { Text("Keluar", color = AureviaRed, fontSize = 13.sp) }
+        }
+
+        // ---------------- isi tab
+        Box(Modifier.weight(1f)) {
+            when (tab) {
+                Tab.BERANDA -> TabBeranda(onGalat)
+                Tab.PENGGUNA -> TabPengguna(onGalat)
+                Tab.EFEK -> TabEfek(onGalat)
+                Tab.ROOM -> TabRoom(onGalat)
+                Tab.SIARAN -> TabSiaran(onGalat)
+            }
+        }
+
+        // ---------------- navigasi bawah
+        Surface(color = Kartu) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                Tab.entries.forEach { t ->
+                    val aktif = t == tab
+                    Column(
+                        Modifier.clip(RoundedCornerShape(14.dp))
+                            .clickable { tab = t }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            t.judul,
+                            color = if (aktif) AureviaRed else TeksRedup,
+                            fontSize = 12.sp,
+                            fontWeight = if (aktif) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- komponen
+
+@Composable
+private fun KartuInfo(judul: String, isi: String, aksen: Color = TeksUtama) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Kartu),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(judul, color = TeksRedup, fontSize = 11.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(isi, color = aksen, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun KolomGulir(isi: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) { isi() }
+}
+
+// ---------------------------------------------------------------- Beranda
+
+@Composable
+private fun TabBeranda(onGalat: (String) -> Unit) {
+    var data by remember { mutableStateOf<JSONObject?>(null) }
+    var memuat by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        try {
+            data = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/overview") }
+        } catch (e: Exception) {
+            onGalat(e.message ?: "Gagal memuat ringkasan")
+        } finally {
+            memuat = false
+        }
+    }
+
+    if (memuat) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = AureviaRed)
+        }
+        return
+    }
+    val d = data
+    KolomGulir {
+        KartuInfo("Pengguna", d?.optInt("users", 0)?.toString() ?: "—")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) {
+                KartuInfo("Staff", d?.optInt("staff", 0)?.toString() ?: "—", Color(0xFF2BD46E))
+            }
+            Box(Modifier.weight(1f)) {
+                KartuInfo("Berverifikasi", d?.optInt("checked", 0)?.toString() ?: "—", Color(0xFFE5B53C))
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) {
+                KartuInfo("Room live", d?.optInt("rooms", 0)?.toString() ?: "—", Color(0xFF1FA2E8))
+            }
+            Box(Modifier.weight(1f)) {
+                KartuInfo("Perangkat", d?.optInt("devices", 0)?.toString() ?: "—")
+            }
+        }
+        Surface(color = KartuTinggi, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Status push", color = TeksRedup, fontSize = 11.sp)
+                Text(d?.optString("push").orEmpty().ifBlank { "—" }, color = TeksUtama, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Pengguna
+
+@Composable
+private fun TabPengguna(onGalat: (String) -> Unit) {
+    var daftar by remember { mutableStateOf<List<Pengguna>>(emptyList()) }
+    var kueri by remember { mutableStateOf("") }
+    var memuat by remember { mutableStateOf(true) }
+    var sibukUser by remember { mutableStateOf<String?>(null) }
+    var pilihRole by remember { mutableStateOf<Pengguna?>(null) }
+    var pilihEfek by remember { mutableStateOf<Pengguna?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun muat() {
+        memuat = true
+        scope.launch {
+            try {
+                val jalur = if (kueri.isBlank()) "/v1/admin/users?limit=100"
+                else "/v1/admin/users?limit=100&q=" + java.net.URLEncoder.encode(kueri, "UTF-8")
+                val hasil = withContext(Dispatchers.IO) { AdminApi.get(jalur) }
+                val arr = hasil.optJSONArray("users") ?: JSONArray()
+                daftar = (0 until arr.length()).map { arr.optJSONObject(it).kePengguna() }
+            } catch (e: Exception) {
+                onGalat(e.message ?: "Gagal memuat pengguna")
+            } finally {
+                memuat = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { muat() }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = kueri,
+                onValueChange = { kueri = it },
+                placeholder = { Text("Cari username / nama", color = TeksRedup, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                colors = TextFieldDefaults.colors(focusedContainerColor = Kartu, unfocusedContainerColor = Kartu),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { muat() }, shape = RoundedCornerShape(14.dp)) { Text("Cari") }
+        }
+
+        if (memuat) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = AureviaRed)
+            }
+            return@Column
+        }
+
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            daftar.forEach { u ->
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Kartu),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(34.dp).clip(CircleShape).background(KartuTinggi),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    u.nama.take(1).uppercase(),
+                                    color = AureviaRed,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(u.nama, color = TeksUtama, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "@${u.username}" + if (u.terverifikasi) " · ✔" else "" +
+                                        if (u.efek.isNotBlank()) " · ✦ ${EfekPremium.label(u.efek)}" else "",
+                                    color = TeksRedup,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            LabelRole(u.role)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TombolKecil("Ubah role") { pilihRole = u }
+                            TombolKecil("Beri efek") { pilihEfek = u }
+                            TombolKecil(
+                                if (u.terverifikasi) "Hapus centang" else "Beri centang",
+                                bahaya = u.terverifikasi,
+                            ) {
+                                if (sibukUser != null) return@TombolKecil
+                                sibukUser = u.username
+                                scope.launch {
+                                    try {
+                                        val badan = JSONObject()
+                                            .put("username", u.username)
+                                            .put("verified", !u.terverifikasi)
+                                        if (u.terverifikasi) badan.put("badge", "")
+                                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/role", badan) }
+                                        muat()
+                                    } catch (e: Exception) {
+                                        onGalat(e.message ?: "Gagal mengubah centang")
+                                    } finally {
+                                        sibukUser = null
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    pilihRole?.let { u ->
+        DialogPilih(
+            judul = "Role @${u.username}",
+            catatan = "Role tetap memberi hak akses. Role kustom hanya label.",
+            pilihan = RoleBaku.semua,
+            terpilih = u.role,
+            izinkanKustom = true,
+            onTutup = { pilihRole = null },
+            onSimpan = { nilai ->
+                scope.launch {
+                    try {
+                        val badan = JSONObject().put("username", u.username).put("role", nilai)
+                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/role", badan) }
+                        pilihRole = null
+                        muat()
+                    } catch (e: Exception) {
+                        onGalat(e.message ?: "Gagal menyimpan role")
+                    }
+                }
+            },
+        )
+    }
+
+    pilihEfek?.let { u ->
+        DialogPilih(
+            judul = "Efek premium @${u.username}",
+            catatan = "Hiasan profil. Tidak menambah hak akses.",
+            pilihan = EfekPremium.semua,
+            terpilih = u.efek,
+            izinkanKustom = false,
+            onTutup = { pilihEfek = null },
+            onSimpan = { nilai ->
+                scope.launch {
+                    try {
+                        val badan = JSONObject()
+                            .put("username", u.username)
+                            .put("effect", nilai.ifBlank { "none" })
+                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/effects", badan) }
+                        pilihEfek = null
+                        muat()
+                    } catch (e: Exception) {
+                        onGalat(e.message ?: "Gagal menyimpan efek")
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun LabelRole(role: String) {
+    val warna = when (role.lowercase()) {
+        "owner" -> Color(0xFF2BD46E)
+        "developer", "dev" -> Color(0xFF1FA2E8)
+        "admin" -> Color(0xFFE5B53C)
+        "user" -> TeksRedup
+        else -> Color(0xFFC77DFF)
+    }
+    Surface(shape = RoundedCornerShape(50), color = warna.copy(alpha = 0.18f)) {
+        Text(
+            role,
+            Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            color = warna,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun TombolKecil(teks: String, bahaya: Boolean = false, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (bahaya) AureviaRed.copy(alpha = 0.16f) else KartuTinggi,
+        modifier = Modifier.clip(RoundedCornerShape(50)).clickable { onClick() },
+    ) {
+        Text(
+            teks,
+            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            color = if (bahaya) AureviaRed else TeksUtama,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+// ---------------------------------------------------------------- Efek
+
+@Composable
+private fun TabEfek(onGalat: (String) -> Unit) {
+    var data by remember { mutableStateOf<JSONObject?>(null) }
+    var memuat by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        try {
+            data = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/effects") }
+        } catch (e: Exception) {
+            onGalat(e.message ?: "Gagal memuat efek")
+        } finally {
+            memuat = false
+        }
+    }
+
+    if (memuat) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = AureviaRed)
+        }
+        return
+    }
+    val pakai = data?.optJSONObject("usage")
+    KolomGulir {
+        Text("Efek premium", color = TeksUtama, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Efek adalah hiasan avatar di profil. Pilih dari tab Pengguna → Beri efek.",
+            color = TeksRedup,
+            fontSize = 12.sp,
+        )
+        EfekPremium.semua.forEach { e ->
+            val pemakai = pakai?.optJSONArray(e.kunci)
+            val jumlah = pemakai?.length() ?: 0
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Kartu),
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(30.dp).clip(CircleShape).background(e.warna.copy(alpha = 0.22f)))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(e.nama, color = TeksUtama, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(e.kunci, color = TeksRedup, fontSize = 11.sp)
+                    }
+                    Text(
+                        if (jumlah > 0) "$jumlah akun" else "belum dipakai",
+                        color = if (jumlah > 0) e.warna else TeksRedup,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Room
+
+@Composable
+private fun TabRoom(onGalat: (String) -> Unit) {
+    var rooms by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var memuat by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        try {
+            val hasil = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/rooms") }
+            val arr = hasil.optJSONArray("rooms") ?: JSONArray()
+            rooms = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+        } catch (e: Exception) {
+            onGalat(e.message ?: "Gagal memuat room")
+        } finally {
+            memuat = false
+        }
+    }
+
+    if (memuat) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = AureviaRed)
+        }
+        return
+    }
+    KolomGulir {
+        Text("Room live", color = TeksUtama, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        if (rooms.isEmpty()) {
+            Text("Belum ada room aktif.", color = TeksRedup, fontSize = 13.sp)
+        }
+        rooms.forEach { r ->
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Kartu),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(r.optString("name").ifBlank { "Room" }, color = TeksUtama, fontWeight = FontWeight.Bold)
+                    Text(
+                        "ID ${r.optString("id")} · host ${r.optString("host").ifBlank { r.optString("hostId") }}" +
+                            " · ${r.optInt("listeners")} pendengar",
+                        color = TeksRedup,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Siaran
+
+@Composable
+private fun TabSiaran(onGalat: (String) -> Unit) {
+    var teks by remember { mutableStateOf("") }
+    var sibuk by remember { mutableStateOf(false) }
+    var hasil by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    KolomGulir {
+        Text("Siaran", color = TeksUtama, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Pesan singkat ke semua akun Aurevia.", color = TeksRedup, fontSize = 12.sp)
+        OutlinedTextField(
+            value = teks,
+            onValueChange = { if (it.length <= 500) teks = it },
+            placeholder = { Text("Pengumuman…", color = TeksRedup, fontSize = 13.sp) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+            colors = TextFieldDefaults.colors(focusedContainerColor = Kartu, unfocusedContainerColor = Kartu),
+        )
+        Text("${teks.length}/500", color = TeksRedup, fontSize = 11.sp)
+        Button(
+            onClick = {
+                if (teks.isBlank()) {
+                    onGalat("Pesan masih kosong.")
+                    return@Button
+                }
+                sibuk = true
+                scope.launch {
+                    try {
+                        val hasilKirim = withContext(Dispatchers.IO) {
+                            AdminApi.post("/v1/admin/broadcast", JSONObject().put("text", teks.trim()))
+                        }
+                        hasil = "Terkirim ke ${hasilKirim.optInt("sent", 0)} akun"
+                        teks = ""
+                    } catch (e: Exception) {
+                        onGalat(e.message ?: "Gagal mengirim siaran")
+                    } finally {
+                        sibuk = false
+                    }
+                }
+            },
+            enabled = !sibuk,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AureviaRed),
+        ) { Text(if (sibuk) "Mengirim…" else "Kirim siaran", fontWeight = FontWeight.SemiBold) }
+        AnimatedVisibility(hasil != null) {
+            Text(hasil.orEmpty(), color = Color(0xFF2BD46E), fontSize = 12.sp)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- dialog pilih
+
+@Composable
+private fun DialogPilih(
+    judul: String,
+    catatan: String,
+    pilihan: List<Pilihan>,
+    terpilih: String,
+    izinkanKustom: Boolean,
+    onTutup: () -> Unit,
+    onSimpan: (String) -> Unit,
+) {
+    var nilai by remember { mutableStateOf(terpilih) }
+    var kustom by remember {
+        mutableStateOf(if (izinkanKustom && pilihan.none { it.kunci == terpilih }) terpilih else "")
+    }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onTutup) {
+        Surface(shape = RoundedCornerShape(22.dp), color = KartuTinggi) {
+            Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
+                Text(judul, color = TeksUtama, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(catatan, color = TeksRedup, fontSize = 12.sp)
+                Spacer(Modifier.height(14.dp))
+                pilihan.forEach { p ->
+                    val aktif = nilai == p.kunci && kustom.isBlank()
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (aktif) p.warna.copy(alpha = 0.20f) else Color.Transparent)
+                            .clickable {
+                                nilai = p.kunci
+                                kustom = ""
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(12.dp).clip(CircleShape).background(p.warna))
+                        Spacer(Modifier.width(10.dp))
+                        Text(p.nama, color = if (aktif) p.warna else TeksUtama, fontSize = 14.sp)
+                    }
+                }
+                if (izinkanKustom) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = kustom,
+                        onValueChange = { if (it.length <= 20) kustom = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '.' || c == '_' || c == '-' } },
+                        label = { Text("Role kustom", fontSize = 12.sp) },
+                        placeholder = { Text("mis. fotografer", color = TeksRedup, fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(focusedContainerColor = Kartu, unfocusedContainerColor = Kartu),
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onTutup) { Text("Batal", color = TeksRedup) }
+                    Spacer(Modifier.width(6.dp))
+                    Button(
+                        onClick = { onSimpan(kustom.trim().ifBlank { nilai }) },
+                        shape = RoundedCornerShape(20.dp),
+                    ) { Text("Simpan") }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- daftar pilihan
+
+internal data class Pilihan(val kunci: String, val nama: String, val warna: Color)
+
+internal object RoleBaku {
+    val semua = listOf(
+        Pilihan("user", "User", Color(0xFF9E9EAE)),
+        Pilihan("admin", "Admin", Color(0xFFE5B53C)),
+        Pilihan("owner", "Owner", Color(0xFF2BD46E)),
+        Pilihan("developer", "Developer", Color(0xFF1FA2E8)),
+    )
+}
+
+/** Enam efek; urutan & kunci sama dengan EFEK_PREMIUM di server. */
+internal object EfekPremium {
+    val semua = listOf(
+        Pilihan("aurora", "Aurora", Color(0xFF6EE7F9)),
+        Pilihan("emas", "Emas", Color(0xFFE9C46A)),
+        Pilihan("neon", "Neon", Color(0xFF7CFF6B)),
+        Pilihan("kristal", "Kristal", Color(0xFFB9E4FF)),
+        Pilihan("api", "Api", Color(0xFFFF7A3D)),
+        Pilihan("hologram", "Hologram", Color(0xFFC77DFF)),
+    )
+
+    fun label(kunci: String): String =
+        semua.firstOrNull { it.kunci == kunci.trim().lowercase() }?.nama ?: kunci
 }
