@@ -60,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,59 +104,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ---------------------------------------------------------------- API
-
-/**
- * Klien API admin. Sengaja memakai HttpURLConnection: satu berkas, tanpa dependensi,
- * jadi panel tidak bisa gagal jalan gara-gara pustaka tambahan.
- */
-internal object AdminApi {
-    /** Disamakan dengan aplikasi utama (AureviaApi.AUREVIA_BASE). */
-    const val BASE = "https://aurevia.rixxstore.my.id"
-
-    class Galat(val status: Int, pesan: String) : Exception(pesan.ifBlank { "galat $status" })
-
-    var token: String? = null
-        private set
-
-    fun masuk(t: String?) { token = t }
-
-    fun get(jalur: String): JSONObject = panggil("GET", jalur, null)
-    fun post(jalur: String, badan: JSONObject?): JSONObject = panggil("POST", jalur, badan)
-
-    private fun panggil(metode: String, jalur: String, badan: JSONObject?): JSONObject {
-        val url = URL(BASE + jalur)
-        val koneksi = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = metode
-            connectTimeout = 20000
-            readTimeout = 25000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "AureviaAdmin/2.2")
-            token?.let { setRequestProperty("Authorization", "Bearer $it") }
-            if (badan != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            }
-        }
-        try {
-            if (badan != null) {
-                koneksi.outputStream.use { it.write(badan.toString().toByteArray(Charsets.UTF_8)) }
-            }
-            val kode = koneksi.responseCode
-            val aliran = if (kode in 200..299) koneksi.inputStream else koneksi.errorStream
-            val teks = aliran?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
-            val json = runCatching { JSONObject(teks) }.getOrNull()
-            if (kode !in 200..299) {
-                val pesan = json?.optString("error").orEmpty().ifBlank { "HTTP $kode" }
-                throw Galat(kode, pesan)
-            }
-            return json ?: JSONObject()
-        } finally {
-            koneksi.disconnect()
-        }
-    }
-}
-
 // ---------------------------------------------------------------- state
 
 private enum class Tab(val judul: String) {
@@ -190,8 +138,15 @@ private fun JSONObject.kePengguna() = Pengguna(
 
 @Composable
 private fun PanelAdmin() {
-    var token by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    // Sesi disimpan terenkripsi oleh AdminSession (Android Keystore), jadi
+    // menutup lalu membuka panel tidak perlu login ulang.
+    var token by remember { mutableStateOf("") }
     var pesan by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        AdminSession.load(ctx)
+        token = AdminSession.token
+    }
 
     Surface(Modifier.fillMaxSize(), color = Latar) {
         Column(Modifier.fillMaxSize()) {
@@ -205,20 +160,14 @@ private fun PanelAdmin() {
                     )
                 }
             }
-            if (token == null) {
+            if (token.isBlank()) {
                 LayarMasuk(
-                    onMasuk = { t ->
-                        AdminApi.masuk(t)
-                        token = t
-                    },
+                    onMasuk = { pesan = null; token = AdminSession.token },
                     onGalat = { pesan = it },
                 )
             } else {
                 IsiPanel(
-                    onKeluar = {
-                        AdminApi.masuk(null)
-                        token = null
-                    },
+                    onKeluar = { AdminSession.clear(ctx); token = "" },
                     onGalat = { pesan = it },
                 )
             }
@@ -227,7 +176,8 @@ private fun PanelAdmin() {
 }
 
 @Composable
-private fun LayarMasuk(onMasuk: (String) -> Unit, onGalat: (String) -> Unit) {
+private fun LayarMasuk(onMasuk: () -> Unit, onGalat: (String) -> Unit) {
+    val ctx = LocalContext.current
     var user by remember { mutableStateOf("") }
     var sandi by remember { mutableStateOf("") }
     var sibuk by remember { mutableStateOf(false) }
@@ -271,10 +221,9 @@ private fun LayarMasuk(onMasuk: (String) -> Unit, onGalat: (String) -> Unit) {
                 sibuk = true
                 scope.launch {
                     try {
-                        val badan = JSONObject().put("username", user).put("password", sandi)
-                        val hasil = withContext(Dispatchers.IO) { AdminApi.post("/v1/auth/login", badan) }
-                        val t = hasil.optString("token")
-                        if (t.isBlank()) onGalat("Server tidak mengirim sesi.") else onMasuk(t)
+                        val hasil = AdminApi.login(user, sandi)
+                        AdminSession.save(ctx, hasil.s("token"), hasil.optJSONObject("user") ?: JSONObject())
+                        onMasuk()
                     } catch (e: Exception) {
                         onGalat(e.message ?: "Gagal masuk")
                     } finally {
@@ -389,7 +338,7 @@ private fun TabBeranda(onGalat: (String) -> Unit) {
 
     LaunchedEffect(Unit) {
         try {
-            data = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/overview") }
+            data = withContext(Dispatchers.IO) { AdminApi.overview() }
         } catch (e: Exception) {
             onGalat(e.message ?: "Gagal memuat ringkasan")
         } finally {
@@ -447,11 +396,7 @@ private fun TabPengguna(onGalat: (String) -> Unit) {
         memuat = true
         scope.launch {
             try {
-                val jalur = if (kueri.isBlank()) "/v1/admin/users?limit=100"
-                else "/v1/admin/users?limit=100&q=" + java.net.URLEncoder.encode(kueri, "UTF-8")
-                val hasil = withContext(Dispatchers.IO) { AdminApi.get(jalur) }
-                val arr = hasil.optJSONArray("users") ?: JSONArray()
-                daftar = (0 until arr.length()).map { arr.optJSONObject(it).kePengguna() }
+                daftar = withContext(Dispatchers.IO) { AdminApi.users(kueri, 100) }.map { it.kePengguna() }
             } catch (e: Exception) {
                 onGalat(e.message ?: "Gagal memuat pengguna")
             } finally {
@@ -531,11 +476,13 @@ private fun TabPengguna(onGalat: (String) -> Unit) {
                                 sibukUser = u.username
                                 scope.launch {
                                     try {
-                                        val badan = JSONObject()
-                                            .put("username", u.username)
-                                            .put("verified", !u.terverifikasi)
-                                        if (u.terverifikasi) badan.put("badge", "")
-                                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/role", badan) }
+                                        withContext(Dispatchers.IO) {
+                                            AdminApi.setRole(
+                                                username = u.username,
+                                                verified = !u.terverifikasi,
+                                                badge = if (u.terverifikasi) "" else null,
+                                            )
+                                        }
                                         muat()
                                     } catch (e: Exception) {
                                         onGalat(e.message ?: "Gagal mengubah centang")
@@ -563,8 +510,7 @@ private fun TabPengguna(onGalat: (String) -> Unit) {
             onSimpan = { nilai ->
                 scope.launch {
                     try {
-                        val badan = JSONObject().put("username", u.username).put("role", nilai)
-                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/role", badan) }
+                        withContext(Dispatchers.IO) { AdminApi.setRole(username = u.username, role = nilai) }
                         pilihRole = null
                         muat()
                     } catch (e: Exception) {
@@ -586,10 +532,7 @@ private fun TabPengguna(onGalat: (String) -> Unit) {
             onSimpan = { nilai ->
                 scope.launch {
                     try {
-                        val badan = JSONObject()
-                            .put("username", u.username)
-                            .put("effect", nilai.ifBlank { "none" })
-                        withContext(Dispatchers.IO) { AdminApi.post("/v1/admin/effects", badan) }
+                        withContext(Dispatchers.IO) { AdminApi.setEffect(u.username, nilai.ifBlank { "none" }) }
                         pilihEfek = null
                         muat()
                     } catch (e: Exception) {
@@ -647,7 +590,7 @@ private fun TabEfek(onGalat: (String) -> Unit) {
 
     LaunchedEffect(Unit) {
         try {
-            data = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/effects") }
+            data = withContext(Dispatchers.IO) { AdminApi.effects() }
         } catch (e: Exception) {
             onGalat(e.message ?: "Gagal memuat efek")
         } finally {
@@ -704,9 +647,7 @@ private fun TabRoom(onGalat: (String) -> Unit) {
 
     LaunchedEffect(Unit) {
         try {
-            val hasil = withContext(Dispatchers.IO) { AdminApi.get("/v1/admin/rooms") }
-            val arr = hasil.optJSONArray("rooms") ?: JSONArray()
-            rooms = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+            rooms = withContext(Dispatchers.IO) { AdminApi.rooms() }
         } catch (e: Exception) {
             onGalat(e.message ?: "Gagal memuat room")
         } finally {
@@ -774,9 +715,7 @@ private fun TabSiaran(onGalat: (String) -> Unit) {
                 sibuk = true
                 scope.launch {
                     try {
-                        val hasilKirim = withContext(Dispatchers.IO) {
-                            AdminApi.post("/v1/admin/broadcast", JSONObject().put("text", teks.trim()))
-                        }
+                        val hasilKirim = withContext(Dispatchers.IO) { AdminApi.broadcast(teks.trim()) }
                         hasil = "Terkirim ke ${hasilKirim.optInt("sent", 0)} akun"
                         teks = ""
                     } catch (e: Exception) {
