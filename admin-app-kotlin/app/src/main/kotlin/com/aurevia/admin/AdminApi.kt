@@ -201,6 +201,20 @@ object AdminApi {
 
     suspend fun appToast(): JSONObject = call("/v1/app/toast", token = "")
 
+    /**
+     * Batch 240 — efek premium profil.
+     *
+     * Efek hanya kosmetik: tidak menyentuh hak akses. "none" menghapus efek.
+     * Server yang memutuskan varian sah; panel hanya mengirim pilihan admin.
+     */
+    suspend fun setEffect(username: String, effect: String): JSONObject =
+        call("/v1/admin/effects", jof("username" to username, "effect" to effect), method = "POST")
+
+    suspend fun effects(): JSONObject = call("/v1/admin/effects")
+
+    suspend fun broadcast(text: String): JSONObject =
+        call("/v1/admin/broadcast", jof("text" to text), method = "POST")
+
     suspend fun notify(title: String, message: String, audience: String, username: String? = null): JSONObject {
         val body = jof("title" to title, "body" to message, "audience" to audience, "openNotifications" to true)
         if (!username.isNullOrBlank()) body.put("username", username)
