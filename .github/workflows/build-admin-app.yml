@@ -50,19 +50,26 @@ jobs:
           ls "$SDK/platforms"
 
       - name: Sumber wajib ada
+        env:
+          SRC: admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin
         run: |
           set -e
           test -f admin-app-kotlin/app/src/main/AndroidManifest.xml
-          test -f admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
-          # Panel harus memuat efek premium & role kustom (batch 240).
-          grep -q 'EfekPremium' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
-          grep -q 'RoleBaku' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt
-          # Endpoint efek ada di lapisan API (AdminApi.kt), bukan di layar.
-          grep -q '/v1/admin/effects' admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/AdminApi.kt
-          # Tidak boleh ada WebView lagi. Yang diperiksa pemakaian API-nya
+          # Panel dipecah per layar; semuanya wajib ada.
+          for f in MainActivity.kt AdminApi.kt Tema.kt Komponen.kt LayarPengguna.kt LayarLain.kt; do
+            test -f "$SRC/$f" || { echo "hilang: $SRC/$f"; exit 1; }
+          done
+          # Fitur yang diminta ada di sumbernya, bukan cuma di lapisan API.
+          grep -q 'AdminApi.ban(' "$SRC/LayarPengguna.kt"      || { echo "tombol ban hilang"; exit 1; }
+          grep -q 'AdminApi.mute(' "$SRC/LayarPengguna.kt"     || { echo "tombol mute hilang"; exit 1; }
+          grep -q 'AdminApi.banIp(' "$SRC/LayarPengguna.kt"    || { echo "blokir IP hilang"; exit 1; }
+          grep -q 'AdminApi.setAppToast(' "$SRC/LayarLain.kt"  || { echo "kendali toast hilang"; exit 1; }
+          grep -q 'EfekPremium' "$SRC/LayarLain.kt"
+          grep -q 'RoleBaku' "$SRC/LayarLain.kt"
+          grep -q '/v1/admin/effects' "$SRC/AdminApi.kt"
+          # Tidak boleh ada WebView. Yang diperiksa pemakaian API-nya
           # (import / android.webkit), bukan kata di komentar.
-          if grep -qE '^import android\.webkit|WebView\(|setWebViewClient' \
-             admin-app-kotlin/app/src/main/kotlin/com/aurevia/admin/MainActivity.kt; then
+          if grep -rqE '^import android\.webkit|WebView\(|setWebViewClient' "$SRC"; then
             echo "MASIH MEMAKAI WebView"; exit 1
           fi
           echo "sumber bersih: Compose, tanpa WebView"
@@ -107,6 +114,7 @@ jobs:
           z = zipfile.ZipFile(sys.argv[1])
           dex = b''.join(z.read(n) for n in z.namelist() if n.endswith('.dex'))
           wajib = [b'Aurevia Admin', b'/v1/admin/effects', b'/v1/admin/overview',
+                   b'/v1/admin/ban', b'/v1/admin/mute', b'/v1/admin/app-toast',
                    b'Role kustom', b'Hologram', b'aurevia.rixxstore.my.id']
           hilang = [w.decode() for w in wajib if w not in dex]
           print("isi panel:", "ok" if not hilang else "HILANG " + str(hilang))
