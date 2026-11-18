@@ -1,7 +1,7 @@
 /*
  * Aurevia Admin — panel Kotlin/Compose asli (tanpa WebView).
  *
- * Batch 240. Panel ini menggantikan shell WebView: seluruh layar digambar dengan
+ * Batch 240. Panel ini menggantikan shell lama: seluruh layar digambar dengan
  * Compose, permintaan HTTP memakai HttpURLConnection (tanpa pustaka tambahan),
  * dan tidak ada satu pun HTML yang dimuat.
  *
