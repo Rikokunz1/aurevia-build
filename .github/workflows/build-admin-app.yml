@@ -1,12 +1,23 @@
-name: Build Aurevia Admin APK
+name: Build Aurevia Admin APK (panel HTML)
+
+# Batch 239 — APK admin dirakit dari admin-app/ (panel HTML + shell WebView Java).
+#
+# Panel Compose (admin-app-kotlin) tidak lengkap di repo ini: hanya berkas Gradle
+# tanpa satu pun sumber .kt, jadi task :app:assembleRelease tidak punya apa pun
+# untuk dikompilasi. Yang lengkap dan bisa dibangun adalah admin-app/: satu
+# admin.html + MainActivity.java + res/. Workflow ini merakit itu.
 
 on:
   workflow_dispatch:
     inputs:
-      ref_note:
-        description: "Catatan build (opsional)"
+      version_name:
+        description: "Versi tampilan (mis. 2.1.0)"
         required: false
-        default: "kotlin-compose"
+        default: "2.1.0"
+      version_code:
+        description: "versionCode"
+        required: false
+        default: "25"
 
 permissions:
   contents: read
@@ -17,9 +28,9 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble Aurevia Admin (Kotlin/Compose)
+    name: Assemble Aurevia Admin (HTML panel)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,40 +48,75 @@ jobs:
           test -d "$SDK"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          SDU="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          [ -x "$SDU" ] || SDU=$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1) || true
-          if [ -n "$SDU" ] && [ -x "$SDU" ]; then
-            yes | "$SDU" --licenses > /dev/null 2>&1 || true
-            "$SDU" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 || true
-          fi
           ls "$SDK/platforms"
 
-      - name: Build release APK
-        working-directory: admin-app-kotlin
+      - name: Panel & sumber wajib ada
         run: |
           set -e
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace :app:assembleRelease
+          for f in admin-app/AndroidManifest.xml admin-app/MainActivity.java admin-app/admin.html; do
+            test -f "$f" || { echo "HILANG: $f"; exit 1; }
+            echo "ok $f ($(wc -c < "$f") byte)"
+          done
+          # Panel harus memuat pemilih role & efek premium (batch 239).
+          grep -q 'id="roleMask"' admin-app/admin.html
+          grep -q 'id="effectMask"' admin-app/admin.html
+          grep -q '/v1/admin/effects' admin-app/admin.html
+          echo "panel memuat pemilih role kustom & efek premium"
 
-      - name: Verifikasi APK
+      - name: Tulis versi ke manifest
         run: |
           set -e
-          APK=$(find admin-app-kotlin/app/build/outputs/apk/release -name '*.apk' | head -1)
-          test -n "$APK"
-          echo "APK=$APK" >> "$GITHUB_ENV"
-          ls -l "$APK"
-          sha256sum "$APK" | tee admin-sha256.txt
-          BT="$ANDROID_HOME/build-tools/35.0.0"
-          "$BT/aapt2" dump badging "$APK" | head -8 | tee admin-badging.txt || true
-          "$BT/apksigner" verify --print-certs "$APK" | head -6 | tee admin-signature.txt || true
+          python3 - "${{ inputs.version_code }}" "${{ inputs.version_name }}" <<'PY'
+          import re, sys, pathlib
+          vc, vn = sys.argv[1], sys.argv[2]
+          p = pathlib.Path('admin-app/AndroidManifest.xml')
+          s = p.read_text()
+          s = re.sub(r'android:versionCode="[^"]*"', f'android:versionCode="{vc}"', s)
+          s = re.sub(r'android:versionName="[^"]*"', f'android:versionName="{vn}"', s)
+          p.write_text(s)
+          print('manifest ->', vc, vn)
+          PY
+
+      - name: Rakit APK
+        run: |
+          set -e
+          SDK="$ANDROID_HOME"
+          BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
+          PLATFORM=$(ls -d "$SDK"/platforms/android-35)
+          echo "BT=$BT"; echo "PLATFORM=$PLATFORM"
+          KERJA="$RUNNER_TEMP/admin"
+          rm -rf "$KERJA"; mkdir -p "$KERJA"/{assets,res,classes,gen,dex}
+          cp admin-app/admin.html "$KERJA/assets/admin.html"
+          cp -r admin-app/res/* "$KERJA/res/"
+          "$BT/aapt2" compile --dir "$KERJA/res" -o "$KERJA/res.zip"
+          "$BT/aapt2" link -o "$KERJA/base.apk" -I "$PLATFORM/android.jar" \
+            --manifest admin-app/AndroidManifest.xml -R "$KERJA/res.zip" \
+            --java "$KERJA/gen" --auto-add-overlay
+          find "$KERJA/gen" -name '*.java' > "$KERJA/sumber.txt"
+          echo admin-app/MainActivity.java >> "$KERJA/sumber.txt"
+          javac -source 17 -target 17 -bootclasspath "$PLATFORM/android.jar" \
+            -d "$KERJA/classes" @"$KERJA/sumber.txt"
+          find "$KERJA/classes" -name '*.class' > "$KERJA/kelas.txt"
+          "$BT/d8" --lib "$PLATFORM/android.jar" --min-api 26 --output "$KERJA/dex" @"$KERJA/kelas.txt"
+          cp "$KERJA/base.apk" "$KERJA/unsigned.apk"
+          (cd "$KERJA" && zip -q -j unsigned.apk dex/classes.dex && zip -q unsigned.apk assets/admin.html)
+          "$BT/zipalign" -f 4 "$KERJA/unsigned.apk" "$KERJA/aligned.apk"
+          keytool -genkeypair -keystore "$KERJA/debug.keystore" -storepass android -keypass android \
+            -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
+          OUT="Aurevia-Admin-v${{ inputs.version_name }}.apk"
+          "$BT/apksigner" sign --ks "$KERJA/debug.keystore" --ks-pass pass:android \
+            --key-pass pass:android --ks-key-alias androiddebugkey --out "$OUT" "$KERJA/aligned.apk"
+          "$BT/apksigner" verify --print-certs "$OUT" | head -3
+          "$BT/aapt2" dump badging "$OUT" | head -6
+          sha256sum "$OUT" | tee admin-sha256.txt
+          ls -l "$OUT"
 
       - name: Upload artefak
         uses: actions/upload-artifact@v4
         with:
           name: aurevia-admin-apk
           path: |
-            ${{ env.APK }}
+            Aurevia-Admin-v${{ inputs.version_name }}.apk
             admin-sha256.txt
-            admin-badging.txt
-            admin-signature.txt
           if-no-files-found: error
