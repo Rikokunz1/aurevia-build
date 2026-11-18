@@ -198,6 +198,40 @@
 </section>
 
 <!-- PEMILIH WARNA BADGE -->
+<div class="sheetMask" id="badgeMask"><!-- Batch 239: pemilih role (termasuk role kustom) -->
+<div class="sheetMask" id="roleMask">
+  <div class="sheet">
+    <div id="roleTitle" style="font-weight:700;font-size:15.5px">Ubah role</div>
+    <div class="ghosttext" style="margin-top:4px">
+      Role tetap punya hak akses. Role kustom hanya label — tidak memberi hak admin.
+    </div>
+    <div class="swatches" id="roleChoices" style="margin-top:12px"></div>
+    <div style="margin-top:12px">
+      <input id="roleCustom" maxlength="20" autocapitalize="none" spellcheck="false"
+             placeholder="role kustom, mis. fotografer">
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="ghost grow" id="roleCancel">Batal</button>
+      <button class="grow" id="roleSave">Simpan role</button>
+    </div>
+  </div>
+</div>
+
+<!-- Batch 239: pemilih efek premium profil -->
+<div class="sheetMask" id="effectMask">
+  <div class="sheet">
+    <div id="effectTitle" style="font-weight:700;font-size:15.5px">Efek premium</div>
+    <div class="ghosttext" style="margin-top:4px">
+      Efek hiasan di profil. Hanya tampilan — tidak menambah hak akses.
+    </div>
+    <div class="swatches" id="effectChoices" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="ghost grow" id="effectCancel">Batal</button>
+      <button class="danger grow" id="effectClear">Tanpa efek</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheetMask" id="badgeMask">
   <div class="sheet">
     <div id="badgeTitle" style="font-weight:700;font-size:15.5px">Beri centang</div>
@@ -235,6 +269,29 @@
     clearTimeout(el._t);
     el._t = setTimeout(function(){ el.className = 'toast'; }, 3200);
   }
+  /*
+   * Batch 239 — role tetap + efek premium.
+   *
+   * Role tetap menentukan hak akses (server yang menegakkan, bukan panel ini).
+   * Role kustom hanya label; server menolak nama yang menyerupai staf supaya
+   * tidak ada akun yang bisa menyamar.
+   */
+  var ROLE_TETAP = [
+    { id: 'user', label: 'User', color: '#8e8e93' },
+    { id: 'admin', label: 'Admin', color: '#e5b53c' },
+    { id: 'owner', label: 'Owner', color: '#2bd46e' },
+    { id: 'developer', label: 'Developer', color: '#1fa2e8' }
+  ];
+  // Disamakan dengan EFEK_PREMIUM di server.
+  var EFEK = [
+    { id: 'aurora', label: 'Aurora', color: '#6ee7f9' },
+    { id: 'emas', label: 'Emas', color: '#e9c46a' },
+    { id: 'neon', label: 'Neon', color: '#7cff6b' },
+    { id: 'kristal', label: 'Kristal', color: '#b9e4ff' },
+    { id: 'api', label: 'Api', color: '#ff7a3d' },
+    { id: 'hologram', label: 'Hologram', color: '#c77dff' }
+  ];
+
   function esc(v){
     return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
@@ -413,7 +470,8 @@
               (u.verified
                 ? '<button class="sm danger" data-act="verify" data-u="' + esc(u.username) + '" data-verified="1">Hapus centang</button>'
                 : '<button class="sm ghost" data-act="verify" data-u="' + esc(u.username) + '" data-verified="0">Beri centang</button>') +
-              '<button class="sm ghost" data-act="badge" data-u="' + esc(u.username) + '">' + (u.badge ? 'Ganti warna' : 'Warna badge') + '</button>' +
+              '<button class="sm ghost" data-act="effect" data-u="' + esc(u.username) + '" data-efek="' + esc(u.efek || '') + '">' +
+                (u.efek ? 'Efek: ' + esc(u.efek) : 'Beri efek') + '</button>' +              '<button class="sm ghost" data-act="badge" data-u="' + esc(u.username) + '">' + (u.badge ? 'Ganti warna' : 'Warna badge') + '</button>' +
             '</div>' +
           '</div>' +
         '</div>';
@@ -458,7 +516,85 @@
       searchUsers();
     }).catch(function(err){ toast(err.message || 'Gagal menyimpan badge', 'err'); });
   });
-  $('badgeCancel').onclick = closeBadgeSheet;
+  /* ---------------------------------------------------------------- role */
+  var roleTarget = { username: '', role: '' };
+  function openRoleSheet(username, current){
+    roleTarget.username = username;
+    roleTarget.role = current || 'user';
+    $('roleTitle').textContent = 'Role @' + username;
+    $('roleCustom').value = ROLE_TETAP.some(function(r){ return r.id === roleTarget.role; }) ? '' : roleTarget.role;
+    renderRoleChoices();
+    $('roleMask').classList.add('on');
+  }
+  function renderRoleChoices(){
+    var html = '';
+    ROLE_TETAP.forEach(function(r){
+      html += '<div class="sw' + (r.id === roleTarget.role ? ' sel' : '') + '" data-role="' + r.id +
+        '" style="background:' + r.color + '">' + esc(r.label) + '</div>';
+    });
+    $('roleChoices').innerHTML = html;
+  }
+  function closeRoleSheet(){ $('roleMask').classList.remove('on'); }
+  $('roleChoices').addEventListener('click', function(e){
+    var el = e.target.closest('.sw');
+    if (!el) return;
+    roleTarget.role = el.getAttribute('data-role');
+    $('roleCustom').value = '';
+    renderRoleChoices();
+  });
+  $('roleCustom').addEventListener('input', function(){
+    // Mengetik role kustom membatalkan pilihan role tetap.
+    if ($('roleCustom').value.trim()) { roleTarget.role = ''; renderRoleChoices(); }
+  });
+  $('roleCancel').onclick = closeRoleSheet;
+  $('roleMask').addEventListener('click', function(e){ if (e.target === $('roleMask')) closeRoleSheet(); });
+  $('roleSave').onclick = function(){
+    var custom = $('roleCustom').value.trim().toLowerCase();
+    var pilih = custom || roleTarget.role;
+    if (!pilih) { toast('Pilih role atau tulis role kustom', 'err'); return; }
+    api('/v1/admin/role', { body: { username: roleTarget.username, role: pilih } }).then(function(){
+      closeRoleSheet();
+      toast('Role @' + roleTarget.username + ' → ' + pilih, 'ok');
+      searchUsers();
+    }).catch(function(err){ toast(err.message || 'Gagal menyimpan role', 'err'); });
+  };
+
+  /* ---------------------------------------------------------------- efek premium */
+  var effectTarget = { username: '', effect: '' };
+  function openEffectSheet(username, current){
+    effectTarget.username = username;
+    effectTarget.effect = current || '';
+    $('effectTitle').textContent = 'Efek premium @' + username;
+    var html = '';
+    EFEK.forEach(function(f){
+      html += '<div class="sw' + (f.id === effectTarget.effect ? ' sel' : '') + '" data-efek="' + f.id +
+        '" style="background:' + f.color + '">' + esc(f.label) + '</div>';
+    });
+    $('effectChoices').innerHTML = html;
+    $('effectMask').classList.add('on');
+  }
+  function closeEffectSheet(){ $('effectMask').classList.remove('on'); }
+  $('effectChoices').addEventListener('click', function(e){
+    var el = e.target.closest('.sw');
+    if (!el) return;
+    var pilih = el.getAttribute('data-efek');
+    api('/v1/admin/effects', { body: { username: effectTarget.username, effect: pilih } }).then(function(){
+      closeEffectSheet();
+      toast('Efek @' + effectTarget.username + ' → ' + pilih, 'ok');
+      searchUsers();
+    }).catch(function(err){ toast(err.message || 'Gagal menyimpan efek', 'err'); });
+  });
+  $('effectCancel').onclick = closeEffectSheet;
+  $('effectClear').onclick = function(){
+    api('/v1/admin/effects', { body: { username: effectTarget.username, effect: 'none' } }).then(function(){
+      closeEffectSheet();
+      toast('Efek @' + effectTarget.username + ' dihapus', 'ok');
+      searchUsers();
+    }).catch(function(err){ toast(err.message || 'Gagal menghapus efek', 'err'); });
+  };
+  $('effectMask').addEventListener('click', function(e){ if (e.target === $('effectMask')) closeEffectSheet(); });
+
+  $('badgeCancel').onclick = closeBadgeSheet;  $('badgeCancel').onclick = closeBadgeSheet;
   $('badgeMask').addEventListener('click', function(e){ if (e.target === $('badgeMask')) closeBadgeSheet(); });
   $('badgeClear').onclick = function(){
     var username = badgeTarget.username;
@@ -498,6 +634,13 @@
         toast('Role @' + username + ' → ' + pick.trim(), 'ok');
         searchUsers();
       }).catch(function(err){ toast(err.message || 'Gagal', 'err'); });
+    }    if (btn.getAttribute('data-act') === 'role') {
+      openRoleSheet(username, btn.getAttribute('data-role') || 'user');
+      return;
+    }
+    if (btn.getAttribute('data-act') === 'effect') {
+      openEffectSheet(username, btn.getAttribute('data-efek') || '');
+      return;
     }
   });
 
