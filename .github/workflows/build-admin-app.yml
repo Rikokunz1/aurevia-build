@@ -97,7 +97,8 @@ jobs:
           set -e
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/apksigner" verify --print-certs "$APK" | head -4
-          "$BT/aapt2" dump badging "$APK" | head -4
+          # Catatan: `aapt2 dump badging` tidak ada — dump badging milik `aapt`.
+          "$BT/aapt" dump badging "$APK" | head -4
           sha256sum "$APK" | tee admin-sha256.txt
           # Panel harus benar-benar ada di dex (bukan shell kosong).
           python3 - "$APK" <<'PY'
