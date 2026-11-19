@@ -1,0 +1,86 @@
+name: Rebuild APK (zip ulang, kunci rilis)
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_name:
+        description: "Aset presign"
+        required: true
+        default: Aurevia-14.3.15-presign.apk
+      out_name:
+        description: "Nama hasil"
+        required: true
+        default: Aurevia-Music-v14.3.15-alt.apk
+
+permissions:
+  contents: write
+
+jobs:
+  alt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Ambil APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p k/d
+          gh release download src-latest --pattern "${{ inputs.asset_name }}" --dir k --clobber
+          APK=$(find k -maxdepth 1 -name '*.apk' | head -1)
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          unzip -q "$APK" -d k/d
+          rm -rf k/d/META-INF/*.SF k/d/META-INF/*.RSA k/d/META-INF/MANIFEST.MF || true
+          ls k/d | head
+      - name: Zip ulang (writer berbeda) + zipalign + tanda tangan
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cd k/d
+          # classes.dex paling depan, sisanya menyusul
+          zip -X -q -9 ../rebuilt.apk classes.dex
+          find . -type f ! -name classes.dex | sed 's|^\./||' > /tmp/list.txt
+          cat /tmp/list.txt | zip -X -q -9 ../rebuilt.apk -@
+          # entri yang HARUS tersimpan tanpa kompresi
+          zip -X -q -0 ../rebuilt.apk resources.arsc
+          find lib assets/dexopt -type f 2>/dev/null | zip -X -q -0 ../rebuilt.apk -@ || true
+          cd ..
+          ls -l rebuilt.apk
+          "$BT/zipalign" -f -p 16 4 rebuilt.apk aligned.apk
+          echo "$KS_B64" | base64 -d > ks.bin
+          "$BT/apksigner" sign --ks ks.bin --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" --key-pass "pass:$KEY_PASSWORD" \
+            --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "${{ inputs.out_name }}" aligned.apk
+          "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "${{ inputs.out_name }}"
+          "$BT/aapt" dump badging "${{ inputs.out_name }}" | head -2
+          stat -c '%s bytes' "${{ inputs.out_name }}"
+          sha256sum "${{ inputs.out_name }}"
+      - name: Cek isi sama dengan asal
+        run: |
+          set -euo pipefail
+          python3 - "$APK" "${{ inputs.out_name }}" <<'PY'
+          import sys, zipfile
+          a = zipfile.ZipFile(sys.argv[1]); b = zipfile.ZipFile(sys.argv[2])
+          na = {i.filename: i.file_size for i in a.infolist()}
+          nb = {i.filename: i.file_size for i in b.infolist()}
+          hilang = [n for n in na if n not in nb and not n.upper().startswith('META-INF/')]
+          print("hilang:", hilang[:5], "| jumlah:", len(nb))
+          assert not hilang, "ada entri hilang"
+          assert b.getinfo('resources.arsc').compress_type == 0, "arsc dikompres"
+          print("isi identik: ok, arsc tersimpan: ok")
+          PY
+      - name: Unggah ke release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload src-latest "${{ inputs.out_name }}" --clobber
