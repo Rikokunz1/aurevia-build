@@ -1,0 +1,99 @@
+name: Sign rotate (4096 -> 2048, lineage)
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_name:
+        required: true
+        default: Aurevia-Music-v14.3.16-presign.apk
+      version_code:
+        required: true
+        default: "249"
+      version_name:
+        required: true
+        default: "14.3.16"
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Ambil presign
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p k
+          gh release download src-latest --pattern "${{ inputs.asset_name }}" --dir k --clobber
+          APK=$(find k -name '*.apk' | head -1); echo "APK=$APK" >> "$GITHUB_ENV"
+          sha256sum "$APK"
+      - name: Siapkan kedua kunci + lineage
+        env:
+          KS_OLD: ${{ secrets.KEYSTORE_B64 }}
+          ALIAS_OLD: ${{ secrets.KEY_ALIAS }}
+          PASS_OLD: ${{ secrets.STORE_PASSWORD }}
+          KPASS_OLD: ${{ secrets.KEY_PASSWORD }}
+          KS_NEW: ${{ secrets.KEYSTORE2048_B64 }}
+          ALIAS_NEW: ${{ secrets.KEY2048_ALIAS }}
+          PASS_NEW: ${{ secrets.KEY2048_STORE_PASSWORD }}
+          KPASS_NEW: ${{ secrets.KEY2048_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$KS_OLD" | base64 -d > k/lama.bin
+          echo "$KS_NEW" | base64 -d > k/baru.bin
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "BT=$BT" >> "$GITHUB_ENV"
+          "$BT/apksigner" rotate --out k/lineage.bin \
+            --old-signer --ks k/lama.bin --ks-key-alias "$ALIAS_OLD" \
+              --ks-pass "pass:$PASS_OLD" --key-pass "pass:$KPASS_OLD" \
+            --new-signer --ks k/baru.bin --ks-key-alias "$ALIAS_NEW" \
+              --ks-pass "pass:$PASS_NEW" --key-pass "pass:$KPASS_NEW"
+          ls -l k/lineage.bin
+          "$BT/apksigner" lineage --in k/lineage.bin --print-certs
+      - name: Tanda tangani dengan kunci baru + lineage
+        env:
+          ALIAS_NEW: ${{ secrets.KEY2048_ALIAS }}
+          PASS_NEW: ${{ secrets.KEY2048_STORE_PASSWORD }}
+          KPASS_NEW: ${{ secrets.KEY2048_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          OUT="k/Aurevia-Music-v${{ inputs.version_name }}.apk"
+          "$BT/zipalign" -f -P 16 4 "$APK" k/aligned.apk
+          "$BT/apksigner" sign --ks k/baru.bin --ks-key-alias "$ALIAS_NEW" \
+            --ks-pass "pass:$PASS_NEW" --key-pass "pass:$KPASS_NEW" \
+            --lineage k/lineage.bin --rotation-min-sdk-version 28 \
+            --min-sdk-version 26 \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "$OUT" k/aligned.apk
+          "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$OUT" | tee k/verify.txt
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          "$BT/aapt" dump badging "$OUT" | head -2
+          sha256sum "$OUT" | tee k/sha.txt
+          stat -c '%s bytes' "$OUT"
+      - name: Cek isi tidak berubah
+        run: |
+          set -euo pipefail
+          python3 - "$APK" "$OUT" <<'PY'
+          import sys, zipfile
+          a=zipfile.ZipFile(sys.argv[1]); b=zipfile.ZipFile(sys.argv[2])
+          na={i.filename:i.file_size for i in a.infolist()}
+          nb={i.filename:i.file_size for i in b.infolist()}
+          hil=[n for n in na if n not in nb]
+          beda=[n for n in na if n in nb and na[n]!=nb[n]]
+          print("entri:",len(nb),"| hilang:",hil[:3],"| ukuran beda:",beda[:3])
+          assert not hil and not beda
+          assert b.getinfo('resources.arsc').compress_type==0
+          print("isi identik & arsc tersimpan: ok")
+          PY
+      - name: Unggah
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload src-latest "$OUT" --clobber
