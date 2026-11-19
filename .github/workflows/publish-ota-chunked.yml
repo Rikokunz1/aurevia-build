@@ -1,0 +1,193 @@
+# Terbitkan OTA ke musicsrv lewat potongan 2 MB + task supervisor (cara yang terbukti
+# dipakai rilis 14.3.11). Menghindari bug workflow lama yang menulis ulang file yang
+# sama lewat /files/write sehingga hasil akhirnya hanya potongan terakhir.
+name: Publish OTA (chunked)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "URL APK bertanda tangan rilis"
+        required: true
+      source_url:
+        description: "URL tarball sumber (GPL)"
+        required: true
+      version_code:
+        description: "versionCode (mis. 245)"
+        required: true
+      version_name:
+        description: "versionName (mis. 14.3.12)"
+        required: true
+      note:
+        description: "Catatan rilis yang tampil di aplikasi"
+        required: true
+        default: "Perbaikan tombol Subscribe dan peringatan update berulang."
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Ambil & periksa APK + sumber
+        run: |
+          set -e
+          curl -fL --retry 3 --max-time 900 -o /tmp/apk.bin "${{ inputs.apk_url }}"
+          curl -fL --retry 3 --max-time 900 -o /tmp/src.bin "${{ inputs.source_url }}"
+          ls -l /tmp/apk.bin /tmp/src.bin
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          BADGING=$("$BT/aapt" dump badging /tmp/apk.bin)
+          echo "$BADGING" | head -2
+          PKG=$(echo "$BADGING" | sed -nE "s/^package: name='([^']+)'.*/\1/p")
+          VC=$(echo "$BADGING" | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")
+          VN=$(echo "$BADGING" | sed -nE "s/.*versionName='([^']+)'.*/\1/p")
+          test "$PKG" = "app.aurevia.music" || { echo "paket salah: $PKG"; exit 1; }
+          test "$VC" = "${{ inputs.version_code }}" || { echo "versionCode beda: $VC"; exit 1; }
+          test "$VN" = "${{ inputs.version_name }}" || { echo "versionName beda: $VN"; exit 1; }
+          "$BT/apksigner" verify --print-certs /tmp/apk.bin 2>&1 | tee /tmp/sig.txt
+          CERT=$(grep -oE 'SHA-256 digest: [0-9a-fA-F]+' /tmp/sig.txt | awk '{print $NF}' | head -1 | tr 'A-F' 'a-f')
+          test "$CERT" = "44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7" \
+            || { echo "bukan tanda tangan rilis: $CERT"; exit 1; }
+          {
+            echo "VC=$VC"; echo "VN=$VN"; echo "CERT=$CERT"
+            echo "SHA=$(sha256sum /tmp/apk.bin | cut -d' ' -f1)"
+            echo "SRC_SHA=$(sha256sum /tmp/src.bin | cut -d' ' -f1)"
+            echo "SIZE=$(stat -c%s /tmp/apk.bin)"
+            echo "SRC_SIZE=$(stat -c%s /tmp/src.bin)"
+          } >> "$GITHUB_ENV"
+          echo "ok $PKG $VN ($VC) $CERT"
+
+      - name: Unggah potongan + tukar manifest
+        env:
+          PTERO_TOKEN: ${{ secrets.PTERO_BUILDER_TOKEN }}
+          CATATAN: ${{ inputs.note }}
+        run: |
+          set -e
+          test -n "$PTERO_TOKEN" || { echo "secret PTERO_BUILDER_TOKEN kosong"; exit 1; }
+          python3 - <<'PY'
+          import hashlib, json, os, time, urllib.parse, urllib.request
+
+          SERVER = 'https://host.sairistore.web.id/api/client/servers/e41563a0'
+          H = {'Authorization': 'Bearer ' + os.environ['PTERO_TOKEN'],
+               'Accept': 'application/json', 'User-Agent': 'Aurevia-OTA/chunked'}
+          CHUNK = 2 * 1024 * 1024
+          VN = os.environ['VN']; VC = int(os.environ['VC'])
+          APK_SHA = os.environ['SHA']; SRC_SHA = os.environ['SRC_SHA']
+          APK_SIZE = int(os.environ['SIZE']); SRC_SIZE = int(os.environ['SRC_SIZE'])
+          PFX_A = 'f' + VN.replace('.', '') + 'apk'
+          PFX_S = 'f' + VN.replace('.', '') + 'src'
+          DONE = 'PUBLISH_' + VN.replace('.', '_') + '_DONE'
+
+          def api(path, body=None, binary=False, ctype='application/json', timeout=300):
+              if isinstance(body, str):
+                  body = body.encode()
+              if body is not None and not isinstance(body, bytes):
+                  body = json.dumps(body).encode()
+              req = urllib.request.Request(SERVER + path, data=body,
+                                           method='POST' if body is not None else 'GET',
+                                           headers={**H, 'Content-Type': ctype})
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  data = r.read()
+                  return data if binary else (json.loads(data) if data else None)
+
+          def baca(p):
+              return api('/files/contents?file=' + urllib.parse.quote(p, safe=''), binary=True)
+
+          def tulis(p, data):
+              return api('/files/write?file=' + urllib.parse.quote(p, safe=''), data, ctype='text/plain')
+
+          def potong_unggah(local, pfx):
+              blob = open(local, 'rb').read()
+              assert hashlib.sha256(blob).hexdigest(), 'kosong'
+              names = []
+              total = (len(blob) + CHUNK - 1) // CHUNK
+              for i in range(total):
+                  n = '/musicsrv/.publish/%s.%03d' % (pfx, i)
+                  tulis(n, blob[i * CHUNK:(i + 1) * CHUNK])
+                  names.append(os.path.basename(n))
+                  print('   %s %d/%d' % (pfx, i + 1, total))
+              return names
+
+          print('== 1. unggah potongan')
+          apk_parts = potong_unggah('/tmp/apk.bin', PFX_A)
+          src_parts = potong_unggah('/tmp/src.bin', PFX_S)
+
+          print('== 2. manifest + task')
+          baru = {
+              'applicationId': 'app.aurevia.music',
+              'versionCode': VC,
+              'versionName': VN,
+              'note': os.environ['CATATAN'],
+              'releasedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'size': APK_SIZE,
+              'sha256': APK_SHA,
+              'sourceSha256': SRC_SHA,
+              'sourceSize': SRC_SIZE,
+              'certificateSha256': os.environ['CERT'],
+          }
+          man_name = 'manifest-%s.json' % VN
+          tulis('/musicsrv/.publish/' + man_name, json.dumps(baru, ensure_ascii=False, indent=2))
+
+          apk_cat = ' '.join('$PUB/' + n for n in apk_parts)
+          src_cat = ' '.join('$PUB/' + n for n in src_parts)
+          task = '''#!/bin/sh
+          set -e
+          cd /home/container/musicsrv
+          PUB=.publish
+          cat %s > $PUB/apk.new
+          cat %s > $PUB/src.new
+          A=$(sha256sum $PUB/apk.new | cut -d' ' -f1)
+          B=$(sha256sum $PUB/src.new | cut -d' ' -f1)
+          echo "APK $A"
+          echo "SRC $B"
+          [ "$A" = "%s" ] || { echo APK_SHA_MISMATCH; exit 1; }
+          [ "$B" = "%s" ] || { echo SRC_SHA_MISMATCH; exit 1; }
+          mkdir -p backups public
+          cp data/aurevia-fork-release.json backups/aurevia-fork-release-pre-%s-$(date +%%s).json
+          mv $PUB/apk.new public/Aurevia-Music-v%s.apk
+          mv $PUB/src.new public/Aurevia-Source-v%s.tar.gz
+          cp $PUB/%s data/.aurevia-release.new
+          mv data/.aurevia-release.new data/aurevia-fork-release.json
+          rm -f %s %s $PUB/%s
+          echo %s
+          ''' % (apk_cat, src_cat, APK_SHA, SRC_SHA, VN, VN, VN, man_name, apk_cat, src_cat, man_name, DONE)
+          task = '\n'.join(line.strip() for line in task.strip().splitlines()) + '\n'
+          tulis('/migration-jobs/task.sh', task)
+          print('   task queued')
+
+          print('== 3. tunggu supervisor')
+          for _ in range(50):
+              time.sleep(6)
+              try:
+                  log = baca('/migration-jobs/task.log').decode(errors='replace')
+              except Exception:
+                  continue
+              if DONE in log:
+                  print('   log tail:', ' | '.join(log.strip().splitlines()[-4:]))
+                  print('PUBLISHED')
+                  break
+              tail = ' | '.join(log.strip().splitlines()[-2:])
+              print('   ...', tail[:200])
+          else:
+              raise SystemExit('timeout menunggu task supervisor')
+          PY
+
+      - name: Verifikasi publik
+        run: |
+          set -e
+          sleep 5
+          curl -fsS --max-time 60 https://aurevia.rixxstore.my.id/v1/app/fork/latest | tee /tmp/live.json
+          python3 - <<PY
+          import json, os
+          d = json.load(open('/tmp/live.json'))
+          assert d['versionCode'] == int('$VC'), d['versionCode']
+          assert d['versionName'] == '$VN', d['versionName']
+          assert d['sha256'] == '$SHA', d['sha256']
+          assert d['sourceSha256'] == '$SRC_SHA', d['sourceSha256']
+          print('manifest live cocok:', d['versionName'], d['versionCode'], d['size'])
+          PY
+          curl -fL --retry 3 --max-time 900 -o /tmp/unduh.apk https://aurevia.rixxstore.my.id/v1/app/fork/download
+          sha256sum /tmp/unduh.apk
+          echo "$SHA  /tmp/unduh.apk" | sha256sum -c -
+          curl -fL --retry 3 --max-time 900 -o /tmp/unduh-src.bin https://aurevia.rixxstore.my.id/v1/app/fork/source
+          echo "$SRC_SHA  /tmp/unduh-src.bin" | sha256sum -c -
+          echo "APK dan sumber di server identik dengan yang diunggah"
