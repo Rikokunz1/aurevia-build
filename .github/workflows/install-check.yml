@@ -1,0 +1,67 @@
+name: Install check (emulator)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "URL APK yang mau diuji pasang"
+        required: true
+      api_level:
+        description: "API level emulator"
+        required: false
+        default: "35"
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Ambil APK + cek tanda tangan
+        run: |
+          set -e
+          curl -fL --retry 3 --max-time 900 -o /tmp/candidate.apk "${{ inputs.apk_url }}"
+          ls -l /tmp/candidate.apk
+          sha256sum /tmp/candidate.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          "$BT/apksigner" verify --verbose --print-certs /tmp/candidate.apk | tee /tmp/verify.txt || true
+          "$BT/zipalign" -c -v 4 /tmp/candidate.apk > /tmp/zipalign.txt 2>&1 && echo "zipalign OK" || echo "ZIPALIGN GAGAL"
+      - name: Enable KVM
+        run: |
+          test -e /dev/kvm && sudo chmod a+rw /dev/kvm && ls -l /dev/kvm
+      - name: Pasang di emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          disk-size: 2048M
+          emulator-boot-timeout: 480
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: |
+            set +e
+            adb logcat -c
+            echo "=== adb install -r"
+            adb install -r -d /tmp/candidate.apk 2>&1 | tee /tmp/install.txt
+            echo "exit=$?"
+            echo "=== pm path"
+            adb shell pm path app.aurevia.music
+            echo "=== dumpsys versi"
+            adb shell dumpsys package app.aurevia.music | grep -E "versionName|versionCode" | head -5
+            echo "=== logcat PackageManager / installd"
+            adb logcat -d | grep -iE "PackageManager|installd|invalid|signature|dexopt|verif" | tail -60
+      - name: Ringkasan
+        if: always()
+        run: |
+          echo "===== apksigner ====="; cat /tmp/verify.txt || true
+          echo "===== zipalign ====="; tail -5 /tmp/zipalign.txt || true
+          echo "===== install ====="; cat /tmp/install.txt || true
