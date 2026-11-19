@@ -1,0 +1,136 @@
+# Tanda tangani ulang APK yang diunggah user dengan KUNCI RILIS Aurevia.
+#
+# Latar belakang: APK dari build uji bertanda tangan sertifikat "test", sehingga
+# Android menolak memasangnya menimpa aplikasi yang sudah ada (dan satu-satunya
+# jalan adalah uninstall = data hilang). Workflow ini TIDAK mengubah isi APK:
+# semua entri disalin apa adanya, hanya META-INF tanda tangan lama yang dibuang,
+# lalu APK ditandatangani ulang dengan kunci rilis yang sama seperti aplikasi
+# yang sudah terpasang di perangkat pengguna.
+name: Sign uploaded APK (release key)
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_name:
+        description: "Nama aset APK di rilis src-latest yang mau ditandatangani"
+        required: true
+      version_code:
+        description: "versionCode (dicek, harus > 0)"
+        required: true
+      version_name:
+        description: "versionName"
+        required: true
+
+jobs:
+  sign:
+    name: Sign with Aurevia release key
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ambil APK dari rilis src-latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p /tmp/kerja
+          gh release download src-latest --pattern "${{ inputs.asset_name }}" --dir /tmp/kerja --clobber
+          APK=$(find /tmp/kerja -maxdepth 1 -name '*.apk' | head -1)
+          test -n "$APK"
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          sha256sum "$APK" | tee /tmp/masuk-sha.txt
+
+      - name: Periksa APK masukan
+        run: |
+          set -e
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/aapt" dump badging "$APK" | head -2
+          PAKET=$("$BT/aapt" dump badging "$APK" | sed -nE "s/^package: name='([^']+)'.*/\1/p")
+          VC=$("$BT/aapt" dump badging "$APK" | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")
+          echo "paket=$PAKET versionCode=$VC"
+          test "$PAKET" = "app.aurevia.music" || { echo "paket salah: $PAKET"; exit 1; }
+          test "$VC" = "${{ inputs.version_code }}" || { echo "versionCode tidak cocok: $VC"; exit 1; }
+
+      - name: Restore kunci rilis
+        run: |
+          set -e
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > "$GITHUB_WORKSPACE/aurevia-release.jks"
+          test -s "$GITHUB_WORKSPACE/aurevia-release.jks"
+          ls -l aurevia-release.jks
+
+      - name: Tanda tangani ulang (isi tidak diubah)
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+          cd /tmp/kerja
+          rm -rf ttd && mkdir ttd && cd ttd
+          unzip -q "$APK"
+          # Buang tanda tangan lama. Nama blok tanda tangan di APK build uji
+          # memakai prefiks acak (mis. AUREVIA.SF / AUREVIA.RSA).
+          rm -f META-INF/MANIFEST.MF
+          find META-INF -maxdepth 1 -type f \( -name '*.SF' -o -name '*.RSA' -o -name '*.DSA' -o -name '*.EC' \) -delete
+          zip -q -r -X ../tidak-bertanda.apk .
+          VN="${{ inputs.version_name }}"
+          OUT="/tmp/kerja/Aurevia-Music-v${VN}.apk"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -f -P 16 4 ../tidak-bertanda.apk /tmp/kerja/aligned.apk
+          "$BT/apksigner" sign \
+            --ks "$GITHUB_WORKSPACE/aurevia-release.jks" \
+            --ks-pass "pass:$STORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --min-sdk-version 26 \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "$OUT" /tmp/kerja/aligned.apk
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$OUT" | tee /tmp/keluar-sig.txt
+
+      - name: Pastikan sertifikatnya kunci rilis
+        run: |
+          set -e
+          HARAP="44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7"
+          ADA=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([[:xdigit:]]+)$/\1/p' /tmp/keluar-sig.txt | tr 'A-F' 'a-f' | sort -u)
+          echo "sertifikat: $ADA"
+          [ "$ADA" = "$HARAP" ] || { echo "SERTIFIKAT BUKAN KUNCI RILIS"; exit 1; }
+          sha256sum "$OUT" | tee /tmp/keluar-sha.txt
+          stat -c '%s' "$OUT"
+
+      - name: Bandingkan isi dengan APK masukan
+        run: |
+          set -e
+          python3 - "$APK" "$OUT" <<'PY'
+          import sys, zipfile
+          a = zipfile.ZipFile(sys.argv[1]); b = zipfile.ZipFile(sys.argv[2])
+          na = {i.filename: i.file_size for i in a.infolist()}
+          nb = {i.filename: i.file_size for i in b.infolist()}
+          hilang = [n for n in na if n not in nb]
+          if hilang:
+              print("HILANG:", hilang[:10]); sys.exit(1)
+          beda = [n for n in na if na[n] != nb[n]]
+          if beda:
+              print("UKURAN BEDA:", beda[:10]); sys.exit(1)
+          sisa = [n for n in nb if n.startswith('META-INF/') and n.endswith(('.SF', '.RSA'))]
+          print("entri:", len(na), "->", len(nb), "| sisa tanda tangan lama:", sisa)
+          print("isi identik: ya (hanya tanda tangan yang diganti)")
+          PY
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$OUT" > /dev/null && echo "zipalign ok"
+          unzip -tq "$OUT" | tail -1
+
+      - name: Upload artefak
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurevia-signed-apk
+          path: ${{ env.OUT }}
+          if-no-files-found: error
