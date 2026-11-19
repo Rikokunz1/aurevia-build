@@ -86,7 +86,9 @@ jobs:
           dibuang = 0
           for i in a.infolist():
               n = i.filename
-              if n.startswith('META-INF/') and (n.endswith(('.SF', '.RSA', '.DSA', '.EC')) or n == 'META-INF/MANIFEST.MF'):
+              naik = n.upper()
+              pusat = n.count('/') == 1 and naik.startswith('META-INF/')
+              if pusat and (naik.endswith(('.SF', '.RSA', '.DSA', '.EC')) or naik == 'META-INF/MANIFEST.MF'):
                   dibuang += 1
                   continue
               info = zipfile.ZipInfo(n, date_time=i.date_time)
@@ -96,12 +98,18 @@ jobs:
               info.create_system = i.create_system
               b.writestr(info, a.read(n))
           b.close()
-          print('entri ditulis:', len(zipfile.ZipFile(keluar).infolist()), '| tanda tangan lama dibuang:', dibuang)
+          out = zipfile.ZipFile(keluar)
+          sisa = [n for n in out.namelist()
+                  if n.count('/') == 1 and n.upper().startswith('META-INF/')
+                  and (n.upper().endswith(('.SF', '.RSA', '.DSA', '.EC')) or n.upper() == 'META-INF/MANIFEST.MF')]
+          print('entri ditulis:', len(out.infolist()), '| tanda tangan lama dibuang:', dibuang, '| sisa:', sisa)
+          if sisa:
+              print('MASIH ADA BLOK TANDA TANGAN LAMA'); raise SystemExit(1)
           PY2
           VN="${{ inputs.version_name }}"
           OUT="/tmp/kerja/Aurevia-Music-v${VN}.apk"
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          "$BT/zipalign" -f -P 16 4 ../tidak-bertanda.apk /tmp/kerja/aligned.apk
+          "$BT/zipalign" -f -P 16 4 /tmp/kerja/tidak-bertanda.apk /tmp/kerja/aligned.apk
           "$BT/apksigner" sign \
             --ks "$GITHUB_WORKSPACE/aurevia-release.jks" \
             --ks-pass "pass:$STORE_PASSWORD" \
