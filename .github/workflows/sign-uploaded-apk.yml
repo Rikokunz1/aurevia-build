@@ -74,13 +74,30 @@ jobs:
         run: |
           set -e
           cd /tmp/kerja
-          rm -rf ttd && mkdir ttd && cd ttd
-          unzip -q "$APK"
-          # Buang tanda tangan lama. Nama blok tanda tangan di APK build uji
-          # memakai prefiks acak (mis. AUREVIA.SF / AUREVIA.RSA).
-          rm -f META-INF/MANIFEST.MF
-          find META-INF -maxdepth 1 -type f \( -name '*.SF' -o -name '*.RSA' -o -name '*.DSA' -o -name '*.EC' \) -delete
-          zip -q -r -X ../tidak-bertanda.apk .
+          # PENTING: jangan pakai `unzip` + `zip` biasa. Cara itu menimpa cara
+          # penyimpanan tiap entri, padahal Android 11+ MENOLAK memasang APK
+          # yang resources.arsc-nya dimampatkan ("failed to parse ... arsc").
+          # Di sini setiap entri ditulis ulang dengan compress_type aslinya.
+          python3 - "$APK" /tmp/kerja/tidak-bertanda.apk <<'PY2'
+          import sys, zipfile
+          masuk, keluar = sys.argv[1], sys.argv[2]
+          a = zipfile.ZipFile(masuk)
+          b = zipfile.ZipFile(keluar, 'w')
+          dibuang = 0
+          for i in a.infolist():
+              n = i.filename
+              if n.startswith('META-INF/') and (n.endswith(('.SF', '.RSA', '.DSA', '.EC')) or n == 'META-INF/MANIFEST.MF'):
+                  dibuang += 1
+                  continue
+              info = zipfile.ZipInfo(n, date_time=i.date_time)
+              info.compress_type = i.compress_type          # <<< dipertahankan
+              info.external_attr = i.external_attr
+              info.internal_attr = i.internal_attr
+              info.create_system = i.create_system
+              b.writestr(info, a.read(n))
+          b.close()
+          print('entri ditulis:', len(zipfile.ZipFile(keluar).infolist()), '| tanda tangan lama dibuang:', dibuang)
+          PY2
           VN="${{ inputs.version_name }}"
           OUT="/tmp/kerja/Aurevia-Music-v${VN}.apk"
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -123,8 +140,18 @@ jobs:
           beda = [n for n in na if na[n] != nb[n]]
           if beda:
               print("UKURAN BEDA:", beda[:10]); sys.exit(1)
-          sisa = [n for n in nb if n.startswith('META-INF/') and n.endswith(('.SF', '.RSA'))]
-          print("entri:", len(na), "->", len(nb), "| sisa tanda tangan lama:", sisa)
+          # Cara penyimpanan harus dipertahankan; Android 11+ menolak
+          # resources.arsc yang dimampatkan.
+          arsc_b = b.getinfo('resources.arsc')
+          if arsc_b.compress_type != 0:
+              print("resources.arsc DIMAMPATKAN — APK akan gagal dipasang"); sys.exit(1)
+          for n in na:
+              if a.getinfo(n).compress_type != b.getinfo(n).compress_type:
+                  print("cara simpan berbeda:", n); sys.exit(1)
+          print("resources.arsc tersimpan (tidak dikompres): ok")
+          print("cara simpan semua entri sama: ok")
+          sisa = [n for n in nb if n.startswith('META-INF/') and n.endswith(('.SF', '.RSA')) and 'AUREVIA' in n]
+          print("entri:", len(na), "->", len(nb))
           print("isi identik: ya (hanya tanda tangan yang diganti)")
           PY
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
