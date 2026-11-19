@@ -1,0 +1,66 @@
+name: Rebuild APK (apktool, kunci rilis)
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_name:
+        description: "Aset APK presign di rilis src-latest"
+        required: true
+        default: Aurevia-14.3.15-presign.apk
+      out_name:
+        description: "Nama file APK hasil"
+        required: true
+        default: Aurevia-Music-v14.3.15-apktool.apk
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Ambil APK + apktool
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p k
+          gh release download src-latest --pattern "${{ inputs.asset_name }}" --dir k --clobber
+          APK=$(find k -name '*.apk' | head -1); echo "APK=$APK" >> "$GITHUB_ENV"
+          curl -fsSL -o k/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+          ls -l k
+      - name: Decode + rebuild (dex disalin apa adanya)
+        run: |
+          set -euo pipefail
+          java -Xmx6g -jar k/apktool.jar d -f -s -o k/dec "$APK"
+          java -Xmx6g -jar k/apktool.jar b -f -o k/rebuilt.apk k/dec
+          ls -l k/rebuilt.apk
+      - name: Tanda tangani dengan kunci rilis
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "$KS_B64" | base64 -d > k/ks.bin
+          "$BT/zipalign" -f -P 16 4 k/rebuilt.apk k/aligned.apk
+          "$BT/apksigner" sign --ks k/ks.bin --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" --key-pass "pass:$KEY_PASSWORD" \
+            --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "k/${{ inputs.out_name }}" k/aligned.apk
+          "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "k/${{ inputs.out_name }}" | tee verify.txt
+          "$BT/aapt" dump badging "k/${{ inputs.out_name }}" | head -2
+          sha256sum "k/${{ inputs.out_name }}" | tee sha.txt
+          stat -c '%s bytes' "k/${{ inputs.out_name }}"
+      - name: Unggah ke release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload src-latest "k/${{ inputs.out_name }}" --clobber
