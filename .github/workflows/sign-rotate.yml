@@ -60,6 +60,9 @@ jobs:
           "$BT/apksigner" lineage --in k/lineage.bin --print-certs
       - name: Tanda tangani dengan kunci baru + lineage
         env:
+          ALIAS_OLD: ${{ secrets.KEY_ALIAS }}
+          PASS_OLD: ${{ secrets.STORE_PASSWORD }}
+          KPASS_OLD: ${{ secrets.KEY_PASSWORD }}
           ALIAS_NEW: ${{ secrets.KEY2048_ALIAS }}
           PASS_NEW: ${{ secrets.KEY2048_STORE_PASSWORD }}
           KPASS_NEW: ${{ secrets.KEY2048_KEY_PASSWORD }}
@@ -67,8 +70,12 @@ jobs:
           set -euo pipefail
           OUT="k/Aurevia-Music-v${{ inputs.version_name }}.apk"
           "$BT/zipalign" -f -P 16 4 "$APK" k/aligned.apk
-          "$BT/apksigner" sign --ks k/baru.bin --ks-key-alias "$ALIAS_NEW" \
-            --ks-pass "pass:$PASS_NEW" --key-pass "pass:$KPASS_NEW" \
+          "$BT/apksigner" sign \
+            --ks k/lama.bin --ks-key-alias "$ALIAS_OLD" \
+              --ks-pass "pass:$PASS_OLD" --key-pass "pass:$KPASS_OLD" \
+            --next-signer \
+            --ks k/baru.bin --ks-key-alias "$ALIAS_NEW" \
+              --ks-pass "pass:$PASS_NEW" --key-pass "pass:$KPASS_NEW" \
             --lineage k/lineage.bin --rotation-min-sdk-version 28 \
             --min-sdk-version 26 \
             --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
