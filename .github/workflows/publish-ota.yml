@@ -1,0 +1,171 @@
+# Terbitkan OTA: unggah APK ke server Pterodactyl (musicsrv) lalu tukar manifest
+# data/aurevia-fork-release.json supaya aplikasi melihat versi baru.
+#
+# Kenapa lewat Actions: token Pterodactyl disimpan sebagai secret repo, jadi
+# tidak perlu ditempel di chat atau di berkas workspace.
+#
+# Aman diulang: berkas lama di-backup, unggahan dipecah 2 MB (batas API),
+# sha256 dicek ULANG di server sebelum manifest ditukar, dan hasil akhirnya
+# diverifikasi lewat endpoint publik.
+name: Publish OTA (musicsrv)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "URL APK yang mau diterbitkan (kosong = pakai APK Rev7 rilis)"
+        required: false
+        default: "https://github.com/Rikokunz1/aurevia-preview/releases/download/rev7/Aurevia-Music-v14.3.6-rev7.apk"
+      source_asset:
+        description: "Nama aset sumber di rilis src-latest (opsional)"
+        required: false
+        default: "Aurevia-Source-v14.3.6.tar.gz"
+      note:
+        description: "Catatan rilis yang tampil di aplikasi"
+        required: true
+        default: "Rev7 — ikon player & notifikasi memakai simbol Aurevia berlatar transparan, logo sisa di widget/banner TV/Wrapped diganti, ikon aplikasi, logo login, dan animasi pembuka kembali ke tampilan asli. Perbaikan Live Chat YouTube dari Rev5 tetap ada."
+
+jobs:
+  publish:
+    name: Upload APK + tukar manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Ambil APK
+        run: |
+          set -e
+          curl -fL --retry 3 --max-time 900 -o /tmp/Aurevia-Music.apk "${{ inputs.apk_url }}"
+          ls -l /tmp/Aurevia-Music.apk
+          sha256sum /tmp/Aurevia-Music.apk | tee /tmp/apk-sha.txt
+
+      - name: Periksa APK sebelum menyentuh server
+        run: |
+          set -e
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          BADGING=$("$BT/aapt" dump badging /tmp/Aurevia-Music.apk)
+          echo "$BADGING" | head -2
+          PAKET=$(echo "$BADGING" | sed -nE "s/^package: name='([^']+)'.*/\1/p")
+          VC=$(echo "$BADGING" | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")
+          VN=$(echo "$BADGING" | sed -nE "s/.*versionName='([^']+)'.*/\1/p")
+          test "$PAKET" = "app.aurevia.music" || { echo "paket salah: $PAKET"; exit 1; }
+          echo "VC=$VC" >> "$GITHUB_ENV"
+          echo "VN=$VN" >> "$GITHUB_ENV"
+          SHA=$(sha256sum /tmp/Aurevia-Music.apk | cut -d' ' -f1)
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          SIZE=$(stat -c%s /tmp/Aurevia-Music.apk)
+          echo "SIZE=$SIZE" >> "$GITHUB_ENV"
+          "$BT/apksigner" verify --print-certs /tmp/Aurevia-Music.apk 2>&1 | tee /tmp/sig.txt
+          CERT=$(grep -oE 'certificate SHA-256 digest: [0-9a-fA-F]+' /tmp/sig.txt | awk '{print $NF}' | head -1 | tr 'A-F' 'a-f')
+          echo "CERT=$CERT" >> "$GITHUB_ENV"
+          echo "paket=$PAKET vc=$VC vn=$VN size=$SIZE cert=$CERT"
+
+      - name: Pastikan sertifikatnya kunci rilis
+        run: |
+          set -e
+          HARAP="44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7"
+          [ "$CERT" = "$HARAP" ] || { echo "APK ini bukan bertanda tangan rilis: $CERT"; exit 1; }
+          echo "sertifikat rilis cocok"
+
+      - name: Terbitkan ke server
+        env:
+          PTERO_BUILDER_TOKEN: ${{ secrets.PTERO_BUILDER_TOKEN }}
+          PTERO_BACKEND_TOKEN: ${{ secrets.PTERO_BACKEND_TOKEN }}
+          CATATAN: ${{ inputs.note }}
+          SOURCE_ASSET: ${{ inputs.source_asset }}
+        run: |
+          set -e
+          python3 - <<'PY'
+          import hashlib, json, os, sys, time, urllib.parse, urllib.request
+
+          SERVER = 'https://host.sairistore.web.id/api/client/servers/e41563a0'
+          H = {'Authorization': 'Bearer ' + os.environ['PTERO_BUILDER_TOKEN'],
+               'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+
+          def api(path, body=None, binary=False, ctype='application/json'):
+              if isinstance(body, str):
+                  body = body.encode()
+              if body is not None and not isinstance(body, bytes):
+                  body = json.dumps(body).encode()
+              req = urllib.request.Request(SERVER + path, data=body, method='POST' if body is not None else 'GET',
+                                           headers={**H, 'Content-Type': ctype})
+              with urllib.request.urlopen(req, timeout=180) as r:
+                  data = r.read()
+                  return data if binary else (json.loads(data) if data else None)
+
+          def baca(p):
+              return api('/files/contents?file=' + urllib.parse.quote(p, safe=''), binary=True)
+
+          def tulis(p, data):
+              if isinstance(data, str):
+                  data = data.encode()
+              return api('/files/write?file=' + urllib.parse.quote(p, safe=''), data, ctype='text/plain')
+
+          def hapus(p):
+              return api('/files/delete', {'root': '/', 'files': [p]})
+
+          def daftar(d='/'):
+              return [r['attributes'] for r in api('/files/list?directory=' + urllib.parse.quote(d, safe=''))['data']]
+
+          APK = '/tmp/Aurevia-Music.apk'
+          isi = open(APK, 'rb').read()
+          sha = os.environ['SHA']; nama = f"/musicsrv/public/Aurevia-Music-v{os.environ['VN']}.apk"
+
+          print('== 1. unggah APK', len(isi), 'byte ->', nama)
+          CHUNK = 2 * 1024 * 1024
+          # Pterodactyl: unggah per potongan lewat /files/write, mulai dari kosong.
+          tulis(nama, b'')
+          for i in range(0, len(isi), CHUNK):
+              potong = isi[i:i+CHUNK]
+              req = urllib.request.Request(
+                  SERVER + '/files/write?file=' + urllib.parse.quote(nama, safe=''),
+                  data=potong, method='POST',
+                  headers={**H, 'Content-Type': 'text/plain'})
+              with urllib.request.urlopen(req, timeout=300) as r:
+                  assert r.status < 300, r.status
+              print(f'   {min(i+CHUNK, len(isi))}/{len(isi)}')
+
+          print('== 2. cek sha di server')
+          balik = baca(nama)
+          sha_server = hashlib.sha256(balik).hexdigest()
+          print('   lokal', sha, len(isi))
+          print('   server', sha_server, len(balik))
+          if sha_server != sha or len(balik) != len(isi):
+              print('UNGGAHAN TIDAK UTUH — manifest tidak ditukar')
+              sys.exit(1)
+
+          print('== 3. backup + tukar manifest')
+          lama = baca('/musicsrv/data/aurevia-fork-release.json')
+          lama_json = json.loads(lama)
+          print('   manifest lama: vc', lama_json.get('versionCode'), lama_json.get('versionName'))
+          tulis(f"/musicsrv/backups/aurevia-fork-release-{lama_json.get('versionName')}-{int(time.time())}.json", lama)
+
+          baru = {
+              'applicationId': 'app.aurevia.music',
+              'versionCode': int(os.environ['VC']),
+              'versionName': os.environ['VN'],
+              'note': os.environ['CATATAN'],
+              'releasedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'size': int(os.environ['SIZE']),
+              'sha256': sha,
+              'certificateSha256': os.environ['CERT'],
+          }
+          tulis('/musicsrv/data/aurevia-fork-release.json', json.dumps(baru, ensure_ascii=False, indent=2))
+          print('   manifest baru:', json.dumps(baru, ensure_ascii=False)[:160])
+          print('SELESAI')
+          PY
+
+      - name: Verifikasi publik
+        run: |
+          set -e
+          sleep 5
+          for i in 1 2 3 4 5; do
+            R=$(curl -fsS --max-time 30 https://aurevia.rixxstore.my.id/v1/app/fork/latest || true)
+            [ -n "$R" ] && break || sleep 10
+          done
+          echo "$R" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("live:", d["versionCode"], d["versionName"], d["size"], d["sha256"][:16]+"...")'
+          echo "$R" | python3 -c 'import json,os,sys; d=json.load(sys.stdin); sys.exit(0 if d["sha256"]==os.environ["SHA"] and d["versionCode"]==int(os.environ["VC"]) else 1)' \
+            && echo "manifest live cocok" || { echo "manifest live TIDAK cocok"; exit 1; }
+          curl -fL --max-time 600 -o /tmp/unduh.apk https://aurevia.rixxstore.my.id/v1/app/fork/download
+          sha256sum /tmp/unduh.apk
+          echo "$SHA  /tmp/unduh.apk" | sha256sum -c -
+          echo "unduh-balik dari server: sha identik"
