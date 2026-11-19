@@ -100,7 +100,10 @@ jobs:
         run: |
           set -e
           HARAP="44682485497b9db1b5742834a7a0fb041e04f2494c8ee63be4212adbb308c5c7"
-          ADA=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([[:xdigit:]]+)$/\1/p' /tmp/keluar-sig.txt | tr 'A-F' 'a-f' | sort -u)
+          # Catatan: keluaran apksigner diawali spasi, jadi pola di bawah tidak
+          # boleh memakai jangkar ^. Ambil juga lewat grep sebagai cadangan.
+          ADA=$(grep -oE 'certificate SHA-256 digest: [0-9a-fA-F]+' /tmp/keluar-sig.txt \
+                  | awk '{print $NF}' | tr 'A-F' 'a-f' | sort -u)
           echo "sertifikat: $ADA"
           [ "$ADA" = "$HARAP" ] || { echo "SERTIFIKAT BUKAN KUNCI RILIS"; exit 1; }
           sha256sum "$OUT" | tee /tmp/keluar-sha.txt
