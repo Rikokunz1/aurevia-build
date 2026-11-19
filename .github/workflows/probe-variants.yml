@@ -1,0 +1,67 @@
+name: Probe variants (skema tanda tangan)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Bangun APK minimal
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          AJ=$(ls -d "$ANDROID_HOME"/platforms/*/android.jar | sort -V | tail -1)
+          echo "BT=$BT" >> "$GITHUB_ENV"
+          mkdir -p p
+          for pkg in nov1 k2048; do
+            cat > p/m-$pkg.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="app.aurevia.p$pkg" android:versionCode="1" android:versionName="1.0">
+              <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+              <application android:label="Aurevia Probe $pkg" />
+          </manifest>
+          XML
+            sed -i 's/^ *//' p/m-$pkg.xml
+            "$BT/aapt2" link -o p/u-$pkg.apk -I "$AJ" --manifest p/m-$pkg.xml
+            "$BT/zipalign" -f 4 p/u-$pkg.apk p/a-$pkg.apk
+          done
+          ls -l p
+      - name: Tanda tangan 3 varian
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$KS_B64" | base64 -d > p/release.bin
+          # kunci 2048-bit baru (hanya untuk uji)
+          keytool -genkeypair -keystore p/k2048.bin -storetype PKCS12 -storepass ujiprobe \
+            -alias ujiprobe -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 10000 \
+            -dname "CN=Aurevia Probe, O=Aurevia, C=ID"
+          "$BT/apksigner" sign --ks p/release.bin --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" --key-pass "pass:$KEY_PASSWORD" --min-sdk-version 26 \
+            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
+            --out p/aurevia-probe-nov1.apk p/a-nov1.apk
+          "$BT/apksigner" sign --ks p/k2048.bin --ks-key-alias ujiprobe \
+            --ks-pass "pass:ujiprobe" --key-pass "pass:ujiprobe" --min-sdk-version 26 \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out p/aurevia-probe-k2048.apk p/a-k2048.apk
+          for f in p/aurevia-probe-nov1.apk p/aurevia-probe-k2048.apk; do
+            echo "== $f"; "$BT/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$f" | grep -E "Verifies|Verified using v[123]|SHA-256 digest"
+            sha256sum "$f"; stat -c '%s bytes' "$f"
+          done
+      - name: Unggah
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload src-latest p/aurevia-probe-nov1.apk p/aurevia-probe-k2048.apk --clobber
