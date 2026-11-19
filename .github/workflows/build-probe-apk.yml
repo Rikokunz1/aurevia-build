@@ -1,0 +1,56 @@
+name: Build probe APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build minimal APK + sign dengan kunci rilis
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          AJ=$(ls -d "$ANDROID_HOME"/platforms/*/android.jar | sort -V | tail -1)
+          echo "build-tools: $BT"; echo "android.jar: $AJ"
+          mkdir -p probe
+          cat > probe/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="app.aurevia.probe" android:versionCode="1" android:versionName="1.0">
+              <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+              <application android:label="Aurevia Probe" />
+          </manifest>
+          XML
+          sed -i 's/^ *//' probe/AndroidManifest.xml
+          "$BT/aapt2" link -o probe/unsigned.apk -I "$AJ" --manifest probe/AndroidManifest.xml
+          echo "$KS_B64" | base64 -d > probe/ks.bin
+          "$BT/zipalign" -f 4 probe/unsigned.apk probe/aligned.apk
+          "$BT/apksigner" sign --ks probe/ks.bin --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" --key-pass "pass:$KEY_PASSWORD" \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out probe/aurevia-probe.apk probe/aligned.apk
+          "$BT/apksigner" verify --print-certs probe/aurevia-probe.apk
+          ls -l probe/aurevia-probe.apk
+          sha256sum probe/aurevia-probe.apk
+      - name: Unggah ke release src-latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload src-latest probe/aurevia-probe.apk --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aurevia-probe
+          path: probe/aurevia-probe.apk
