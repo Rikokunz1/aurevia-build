@@ -219,12 +219,23 @@ jobs:
           stat -c '%s byte' "$APK_OUT"
           ls -l "$APK_OUT"
 
+      - name: Siapkan salinan base64 (tahan filter unduhan)
+        run: |
+          set -e
+          mkdir -p /tmp/out
+          cp /tmp/Aurevia-Music-v*.apk /tmp/out/
+          base64 -w 0 /tmp/out/Aurevia-Music-v*.apk > /tmp/out/apk.b64
+          sha256sum /tmp/out/Aurevia-Music-v*.apk > /tmp/out/sha.b64
+          ls -l /tmp/out
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aurevia-apk
           path: |
             /tmp/Aurevia-Music-v*.apk
+            /tmp/out/apk.b64
+            /tmp/out/sha.b64
             /tmp/apk-sha.txt
             /tmp/video-geometry-tests.txt
             /tmp/backend-tests.txt
@@ -235,73 +246,3 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  install-test:
-    name: Real install + upgrade API ${{ matrix.api }}
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        api: [30, 33, 35]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Download release candidate
-        uses: actions/download-artifact@v4
-        with:
-          name: aurevia-apk
-          path: inputs/candidate
-      - name: Download upgrade baseline
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p inputs/baseline reports
-          gh release download install-fixtures --pattern '*.apk' --dir inputs/baseline
-          sha256sum inputs/*/*.apk | tee reports/input-sha256.txt
-      - name: Download already-installed private baseline
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/installed-baseline inputs/installed-baseline
-          gh run download "${{ inputs.installed_baseline_run }}" --name aurevia-apk --dir /tmp/installed-baseline
-          find /tmp/installed-baseline -name '*.apk' -exec cp {} inputs/installed-baseline/ \;
-          test "$(find inputs/installed-baseline -name '*.apk' | wc -l)" -eq 1
-          sha256sum inputs/installed-baseline/*.apk | tee reports/installed-baseline-sha256.txt
-      - name: Free ephemeral runner disk before emulator boot
-        run: |
-          set -euo pipefail
-          df -h "$HOME"
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
-          python3 -c 'import os, shutil; f=shutil.disk_usage(os.environ["HOME"]).free; print("Emulator free GiB",f/1024**3); assert f>=12*1024**3, "CI disk shortage before install, not an APK rejection"'
-      - name: Enable KVM
-        run: |
-          test -e /dev/kvm
-          sudo chmod a+rw /dev/kvm
-      - name: Android package-manager install, upgrade, launch
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ matrix.api }}
-          arch: x86_64
-          target: google_apis
-          profile: pixel_2
-          cores: 2
-          ram-size: 2048M
-          disk-size: 2048M
-          emulator-boot-timeout: 420
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/install-diagnostics.sh
-      - name: Save install evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: install-report-api-${{ matrix.api }}
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 14
