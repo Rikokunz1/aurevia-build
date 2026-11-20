@@ -45,18 +45,18 @@ jobs:
             set +e
             adb install -r -d /tmp/candidate.apk 2>&1 | tee /tmp/install.txt
             # kasih semua izin supaya tidak mentok di dialog
-            for p in READ_MEDIA_AUDIO READ_MEDIA_VIDEO POST_NOTIFICATIONS READ_EXTERNAL_STORAGE; do
-              adb shell pm grant app.aurevia.music android.permission.$p 2>/dev/null
-            done
+            adb shell pm grant app.aurevia.music android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+            adb shell pm grant app.aurevia.music android.permission.READ_MEDIA_AUDIO 2>/dev/null || true
+            adb shell pm grant app.aurevia.music android.permission.READ_MEDIA_VIDEO 2>/dev/null || true
             adb logcat -c
             adb shell am start -n app.aurevia.music/com.metrolist.music.MainActivity
             sleep 20
-            # tekan "Allow" / "Izinkan" bila dialog izin muncul, lalu masuk ke layar utama
-            for i in 1 2 3 4; do
-              adb shell input keyevent 66 2>/dev/null
-              adb shell input tap 540 1400 2>/dev/null
-              sleep 4
-            done
+            adb shell input keyevent 66 2>/dev/null
+            adb shell input tap 540 1400 2>/dev/null
+            sleep 4
+            adb shell input keyevent 66 2>/dev/null
+            adb shell input tap 540 1400 2>/dev/null
+            sleep 6
             adb shell am start -n app.aurevia.music/com.metrolist.music.MainActivity >/dev/null 2>&1
             sleep 15
             echo "===== PROSES HIDUP? ====="
